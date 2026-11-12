@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -282,9 +283,10 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < grid.getChildCount(); i++) {
             View child = grid.getChildAt(i);
             boolean active = first + i == selected;
-            child.setBackgroundColor(active ? 0xff59c8ff : 0xff262832);
-            child.setPadding(active ? dp(4) : 0, active ? dp(4) : 0, active ? dp(4) : 0, active ? dp(4) : 0);
-            child.setElevation(active ? dp(6) : 0);
+            GradientDrawable outline = new GradientDrawable();
+            outline.setColor(0xff262832);
+            if (active) outline.setStroke(dp(3), 0xff59c8ff);
+            child.setBackground(outline);
         }
     }
 
@@ -319,9 +321,10 @@ public final class MainActivity extends Activity {
         @Override public View getView(int position, View recycled, ViewGroup parent) {
             FrameLayout cell = recycled instanceof FrameLayout ? (FrameLayout) recycled : new FrameLayout(MainActivity.this);
             ImageView image;
-            if (cell.getChildCount() == 0) { image = new ImageView(MainActivity.this); image.setScaleType(ImageView.ScaleType.CENTER_CROP); cell.addView(image, new FrameLayout.LayoutParams(-1, -1)); TextView name = label("", 13); name.setBackgroundColor(0x99000000); FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM); cell.addView(name, lp); }
+            if (cell.getChildCount() == 0) { image = new ImageView(MainActivity.this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(176), Gravity.TOP); cell.addView(image, imageParams); TextView name = label("", 13); name.setBackgroundColor(0x99000000); name.setSingleLine(true); name.setEllipsize(android.text.TextUtils.TruncateAt.END); FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(44), Gravity.BOTTOM); cell.addView(name, lp); }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); Photo photo = photos.get(position); name.setText(photo.name);
-            cell.setBackgroundColor(0xff262832); cell.setPadding(0, 0, 0, 0); cell.setElevation(0);
+            cell.setBackgroundColor(0xff262832);
+            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(220)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
