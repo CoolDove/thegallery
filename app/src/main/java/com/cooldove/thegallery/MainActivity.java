@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 public final class MainActivity extends Activity {
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
+    private static final int EXIT_HOLD_DURATION_MS = 1000;
     private static final int PICK_FOLDER = 1;
     private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
@@ -472,7 +473,7 @@ public final class MainActivity extends Activity {
 
     private void beginExitHold() {
         if (exitRunnable != null) return;
-        exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(1500); exitProgress.setProgress(0);
+        exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(EXIT_HOLD_DURATION_MS); exitProgress.setProgress(0);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(8), Gravity.BOTTOM); root.addView(exitProgress, lp);
         exitHint = label("长按B退出应用", 16);
         exitHint.setBackgroundColor(0xaa222529);
@@ -483,7 +484,7 @@ public final class MainActivity extends Activity {
         exitHintRunnable = () -> { if (exitHint != null) exitHint.setVisibility(View.VISIBLE); };
         handler.postDelayed(exitHintRunnable, 300);
         long started = android.os.SystemClock.uptimeMillis();
-        exitRunnable = new Runnable() { @Override public void run() { int progress = (int)(android.os.SystemClock.uptimeMillis() - started); if (exitProgress != null) exitProgress.setProgress(progress); if (progress >= 1500) finish(); else handler.postDelayed(this, 30); } };
+        exitRunnable = new Runnable() { @Override public void run() { int progress = (int)(android.os.SystemClock.uptimeMillis() - started); if (exitProgress != null) exitProgress.setProgress(Math.min(progress, EXIT_HOLD_DURATION_MS)); if (progress >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
         handler.post(exitRunnable);
     }
     private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); if (exitHintRunnable != null) handler.removeCallbacks(exitHintRunnable); exitRunnable = null; exitHintRunnable = null; if (exitProgress != null) root.removeView(exitProgress); if (exitHint != null) root.removeView(exitHint); exitProgress = null; exitHint = null; }
