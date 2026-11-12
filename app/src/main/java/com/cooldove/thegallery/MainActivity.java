@@ -324,9 +324,8 @@ public final class MainActivity extends Activity {
             if (cell.getChildCount() == 0) {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                image.setBackgroundColor(0xffffffff);
                 image.setPadding(dp(8), dp(8), dp(8), dp(8));
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(176), Gravity.TOP);
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(150), Gravity.TOP);
                 imageParams.setMargins(dp(4), dp(4), dp(4), 0);
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
