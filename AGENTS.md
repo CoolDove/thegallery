@@ -29,7 +29,7 @@ The Gallery is an offline image viewer for Android handheld gaming devices, prim
 
 ## Technical decisions pending
 
-- Android SDK / minimum supported Android version. A practical initial recommendation is compile/target SDK 36 (Android 16) with min SDK 28 (Android 9), subject to confirming the target handheld devices and their Android versions. SAF folder selection and persisted URI access work on older Android versions too, so raise min SDK only if device requirements or chosen libraries require it.
-- App language, UI framework, and build setup.
-- Thumbnail presentation and performance limits.
+- Android SDK / minimum supported Android version. Target hardware may include Android 11 / API 30; min SDK 28 (Android 9) is acceptable. Keep target SDK decision open: a lower target does not generally improve compatibility and can restrict newer platform behavior; choose a currently supported target after checking Google Play/distribution requirements and testing on API 30 hardware.
+- App language and build setup. Controller-first input behavior is a top-level requirement; evaluate UI framework choices against robust D-pad/physical-key handling, focus visibility, and predictable navigation before selecting one. Jetpack Compose is acceptable only if these controller requirements are met and validated.
+- Thumbnail presentation and performance limits. Expect folders containing thousands of images; first phase should use a virtualized grid, asynchronous thumbnail loading, and a bounded in-memory thumbnail cache rather than loading full-resolution images into the grid.
 - Exact touch gestures and remaining controller mappings.
