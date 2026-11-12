@@ -157,16 +157,6 @@ public final class MainActivity extends Activity {
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
         LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff191b22);
-        LinearLayout directions = new LinearLayout(this);
-        directions.setGravity(Gravity.CENTER_VERTICAL);
-        directions.addView(icon("generic_dpad_up_96dpi"));
-        directions.addView(icon("generic_dpad_down_96dpi"));
-        directions.addView(icon("generic_dpad_left_96dpi"));
-        directions.addView(icon("generic_dpad_right_96dpi"));
-        controls.addView(directions);
-        TextView navigate = label("Navigate", 15);
-        navigate.setPadding(0, 0, dp(6), 0);
-        controls.addView(navigate);
         controls.addView(prompt("switch_a_96dpi", "View", 15));
         controls.addView(prompt("switch_x_96dpi", "Sort", 15));
         controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
@@ -258,7 +248,6 @@ public final class MainActivity extends Activity {
         viewing = true; root.removeAllViews();
         fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff08090c); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xaa191b22);
-        controls.addView(prompt("generic_dpad_left_96dpi", "Previous / next", 15));
         controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
         FrameLayout.LayoutParams controlParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         root.addView(controls, controlParams);
@@ -272,6 +261,10 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (!viewing && key == KeyEvent.KEYCODE_BUTTON_START) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && grid != null) grid.requestFocus();
+            return true;
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) beginExitHold();
             if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (viewing) showGrid(); else if (folder == null) pickFolder(); }
@@ -283,6 +276,7 @@ public final class MainActivity extends Activity {
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_BUTTON_A)) { if (grid == null || photos.isEmpty()) { pickFolder(); return true; } int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             if (grid == null || photos.isEmpty()) return true;
+            grid.requestFocus();
             if (grid.getSelectedItemPosition() >= 0) selected = grid.getSelectedItemPosition();
             if (key == KeyEvent.KEYCODE_DPAD_LEFT) selected = Math.max(0, selected - 1);
             else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) selected = Math.min(photos.size() - 1, selected + 1);
