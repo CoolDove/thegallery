@@ -182,7 +182,7 @@ public final class MainActivity extends Activity {
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER_HORIZONTAL);
         page.setPadding(dp(32), dp(12), dp(32), dp(12));
-        page.setBackgroundColor(0xff101116);
+        page.setBackgroundColor(0xff181a1d);
         TextView heading = label("Settings", 28);
         page.addView(heading, new LinearLayout.LayoutParams(-1, -2));
         TextView category = label("Sources", 21);
@@ -229,14 +229,14 @@ public final class MainActivity extends Activity {
         settingsFocus = Math.max(0, Math.min(settingsFocus, settingsActions.size() - 1));
         View action = settingsActions.get(settingsFocus);
         action.requestFocus();
-        action.setBackgroundColor(0xff167eaa);
+        action.setBackgroundColor(0xff555a60);
     }
 
     private void focusable(View view) {
         view.setFocusable(true);
         view.setFocusableInTouchMode(true);
-        view.setBackgroundColor(0xff262832);
-        view.setOnFocusChangeListener((v, focused) -> v.setBackgroundColor(focused ? 0xff167eaa : 0xff262832));
+        view.setBackgroundColor(0xff303338);
+        view.setOnFocusChangeListener((v, focused) -> v.setBackgroundColor(focused ? 0xff555a60 : 0xff303338));
     }
 
     private void pickSource() {
@@ -252,7 +252,7 @@ public final class MainActivity extends Activity {
 
     private void showGrid() {
         viewing = false; root.removeAllViews();
-        LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff101116);
+        LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View folderButton = prompt("switch_plus_96dpi", "Folder", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
         View settingsButton = prompt("switch_start_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
@@ -265,7 +265,7 @@ public final class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
-        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff191b22);
+        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff222529);
         controls.addView(prompt("switch_a_96dpi", "View", 15));
         controls.addView(prompt("switch_x_96dpi", "Sort", 15));
         controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
@@ -283,8 +283,8 @@ public final class MainActivity extends Activity {
             View child = grid.getChildAt(i);
             boolean active = first + i == selected;
             GradientDrawable outline = new GradientDrawable();
-            outline.setColor(0xff292833);
-            if (active) outline.setStroke(dp(3), 0xff59c8ff);
+            outline.setColor(0xff35383d);
+            if (active) outline.setStroke(dp(3), 0xffaeb3b8);
             child.setBackground(outline);
         }
     }
@@ -329,15 +329,18 @@ public final class MainActivity extends Activity {
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
                 name.setGravity(Gravity.TOP | Gravity.LEFT);
-                name.setPadding(dp(10), dp(7), dp(10), dp(4));
+                name.setPadding(dp(10), dp(2), dp(10), dp(2));
                 name.setMaxLines(2);
                 name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM);
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(42), Gravity.BOTTOM);
                 cell.addView(name, lp);
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); Photo photo = photos.get(position); name.setText(photo.name);
-            cell.setBackgroundColor(0xff292833);
-            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(220)));
+            GradientDrawable cellBackground = new GradientDrawable();
+            cellBackground.setColor(0xff35383d);
+            cellBackground.setCornerRadius(dp(6));
+            cell.setBackground(cellBackground);
+            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(208)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
@@ -371,7 +374,7 @@ public final class MainActivity extends Activity {
     private void openPhoto() {
         if (photos.isEmpty()) return;
         viewing = true; root.removeAllViews();
-        fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff08090c); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
+        fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff111315); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
@@ -395,7 +398,7 @@ public final class MainActivity extends Activity {
                 if (bitmap == null) return;
                 ImageView incoming = new ImageView(MainActivity.this);
                 incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                incoming.setBackgroundColor(0xff08090c);
+                incoming.setBackgroundColor(0xff111315);
                 incoming.setImageBitmap(bitmap);
                 incoming.setAlpha(0f);
                 root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
@@ -472,7 +475,7 @@ public final class MainActivity extends Activity {
         exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(1500); exitProgress.setProgress(0);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(8), Gravity.BOTTOM); root.addView(exitProgress, lp);
         exitHint = label("长按B退出应用", 16);
-        exitHint.setBackgroundColor(0xaa191b22);
+        exitHint.setBackgroundColor(0xaa222529);
         exitHint.setVisibility(View.GONE);
         FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         hintParams.bottomMargin = dp(8);
