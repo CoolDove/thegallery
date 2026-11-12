@@ -31,6 +31,8 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 public final class MainActivity extends Activity {
+    private static final long PHOTO_LOAD_TIMEOUT_MS = 500;
+    private static final long PHOTO_FADE_MS = 110;
     private static final int PICK_FOLDER = 1;
     private static final String PREFS = "gallery";
     private static final String[] SORTS = {"Newest", "Oldest", "Name A–Z", "Name Z–A"};
@@ -60,6 +62,10 @@ public final class MainActivity extends Activity {
         grid.setSelection(selected);
     };
     private ImageView fullImage;
+    private ImageView incomingImage;
+    private int photoTransition;
+    private boolean transitionWaiting;
+    private boolean transitionStarted;
     private ProgressBar exitProgress;
     private Runnable exitRunnable;
 
@@ -218,12 +224,71 @@ public final class MainActivity extends Activity {
         if (photos.isEmpty()) return;
         viewing = true; root.removeAllViews();
         fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff08090c); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
+        photoTransition++;
+        fullImage.setAlpha(0f);
         displayPhoto(); fullImage.requestFocus();
     }
 
     private void displayPhoto() {
-        Photo photo = photos.get(selected); fullImage.setImageDrawable(null);
-        loader.execute(() -> { Bitmap bitmap = decode(photo, 2400); runOnUiThread(() -> { if (viewing && photos.get(selected) == photo) fullImage.setImageBitmap(bitmap); }); });
+        if (fullImage == null || photos.isEmpty()) return;
+        Photo photo = photos.get(selected);
+        int transition = ++photoTransition;
+        transitionWaiting = true;
+        transitionStarted = false;
+        handler.removeCallbacks(photoLoadTimeout);
+        handler.postDelayed(photoLoadTimeout, PHOTO_LOAD_TIMEOUT_MS);
+        loader.execute(() -> {
+            Bitmap bitmap = decode(photo, 2400);
+            runOnUiThread(() -> {
+                if (!viewing || transition != photoTransition || fullImage == null) return;
+                handler.removeCallbacks(photoLoadTimeout);
+                transitionWaiting = false;
+                if (bitmap == null) { beginPhotoFadeOut(transition); return; }
+                if (transitionStarted) {
+                    fullImage.setImageBitmap(bitmap);
+                    fullImage.setAlpha(0f);
+                    fullImage.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
+                    transitionStarted = true;
+                } else {
+                    if (fullImage.getDrawable() == null) {
+                        fullImage.setImageBitmap(bitmap);
+                        fullImage.setAlpha(0f);
+                        fullImage.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
+                    } else {
+                        if (incomingImage != null) root.removeView(incomingImage);
+                        incomingImage = new ImageView(MainActivity.this);
+                        incomingImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                        incomingImage.setBackgroundColor(0xff08090c);
+                        incomingImage.setImageBitmap(bitmap);
+                        incomingImage.setAlpha(0f);
+                        root.addView(incomingImage, new FrameLayout.LayoutParams(-1, -1));
+                        incomingImage.animate().alpha(1f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+                            if (transition != photoTransition || incomingImage == null) return;
+                            fullImage.setImageBitmap(bitmap);
+                            root.removeView(incomingImage);
+                            incomingImage = null;
+                        }).start();
+                    }
+                }
+            });
+        });
+    }
+
+    private final Runnable photoLoadTimeout = () -> {
+        if (!viewing || !transitionWaiting || fullImage == null) return;
+        transitionWaiting = false;
+        beginPhotoFadeOut(photoTransition);
+    };
+
+    private void beginPhotoFadeOut(int transition) {
+        if (transition != photoTransition || fullImage == null) return;
+        if (incomingImage != null) { root.removeView(incomingImage); incomingImage = null; }
+        transitionStarted = true;
+        fullImage.setImageDrawable(null);
+        fullImage.animate().cancel();
+        fullImage.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+            if (!viewing || transition != photoTransition || fullImage == null) return;
+        }).start();
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
