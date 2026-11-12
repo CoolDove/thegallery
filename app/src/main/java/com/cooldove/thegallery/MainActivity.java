@@ -56,6 +56,8 @@ public final class MainActivity extends Activity {
     private int selected, sort;
     private boolean viewing;
     private boolean settings;
+    private final ArrayList<View> settingsActions = new ArrayList<>();
+    private int settingsFocus;
     private int gridColumns = 1;
     private long lastDpadMove;
     private boolean dpadMovePending;
@@ -174,6 +176,7 @@ public final class MainActivity extends Activity {
 
     private void showSettings() {
         settings = true;
+        settingsActions.clear();
         root.removeAllViews();
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -195,6 +198,7 @@ public final class MainActivity extends Activity {
             row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
             TextView remove = label("[−] Remove", 17);
             focusable(remove);
+            settingsActions.add(remove);
             remove.setOnClickListener(v -> {
                 sources.remove(source);
                 persistSources();
@@ -207,16 +211,25 @@ public final class MainActivity extends Activity {
         }
         TextView add = label("[ + ] Add source", 20);
         focusable(add);
+        settingsActions.add(add);
         add.setOnClickListener(v -> pickSource());
         page.addView(add, new LinearLayout.LayoutParams(-1, -2));
         TextView back = label("[ B ] Back to gallery", 18);
         focusable(back);
+        settingsActions.add(back);
         back.setOnClickListener(v -> closeSettings());
         page.addView(back, new LinearLayout.LayoutParams(-1, -2));
         root.addView(page, new FrameLayout.LayoutParams(-1, -1));
-        View initial = page.getChildAt(Math.max(2, page.getChildCount() - 2));
-        initial.setFocusableInTouchMode(true);
-        initial.requestFocus();
+        settingsFocus = Math.max(0, settingsActions.size() - 2);
+        focusSettingsAction();
+    }
+
+    private void focusSettingsAction() {
+        if (settingsActions.isEmpty()) return;
+        settingsFocus = Math.max(0, Math.min(settingsFocus, settingsActions.size() - 1));
+        View action = settingsActions.get(settingsFocus);
+        action.requestFocus();
+        action.setBackgroundColor(0xff167eaa);
     }
 
     private void focusable(View view) {
@@ -412,6 +425,21 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (settings) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); return true;
+                }
+                if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    settingsFocus = Math.floorMod(settingsFocus - 1, settingsActions.size()); focusSettingsAction(); return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                    if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) { closeSettings(); return true; }
+            }
+            return true;
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) beginExitHold();
             if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); }
