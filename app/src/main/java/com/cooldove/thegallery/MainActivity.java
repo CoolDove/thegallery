@@ -23,6 +23,9 @@ import android.widget.TextView;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Comparator;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,9 +35,11 @@ import java.util.concurrent.TimeUnit;
 
 public final class MainActivity extends Activity {
     private static final int PICK_FOLDER = 1;
+    private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
     private static final String[] SORTS = {"Newest", "Oldest", "Name A–Z", "Name Z–A"};
     private final ArrayList<Photo> photos = new ArrayList<>();
+    private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
     private final ExecutorService loader = Executors.newFixedThreadPool(3);
     private final ConcurrentHashMap<String, Boolean> pendingThumbnails = new ConcurrentHashMap<>();
@@ -48,6 +53,7 @@ public final class MainActivity extends Activity {
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
+    private boolean settings;
     private int gridColumns = 1;
     private long lastDpadMove;
     private boolean dpadMovePending;
@@ -73,8 +79,13 @@ public final class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         root = new FrameLayout(this);
         setContentView(root);
-        String savedText = getPreferences(0).getString("folder", "");
-        if (!savedText.isEmpty()) { folder = Uri.parse(savedText); scan(); }
+        Set<String> savedSources = getPreferences(0).getStringSet("sources", Collections.emptySet());
+        if (!savedSources.isEmpty()) {
+            for (String source : savedSources) sources.add(Uri.parse(source));
+            folder = sources.get(0); scan();
+        } else if (!getPreferences(0).getString("folder", "").isEmpty()) {
+            folder = Uri.parse(getPreferences(0).getString("folder", "")); sources.add(folder); scan();
+        }
         else empty("Choose a folder to browse images", true);
     }
 
@@ -98,12 +109,17 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request == PICK_FOLDER && result == RESULT_OK && data != null && data.getData() != null) {
+        if ((request == PICK_FOLDER || request == PICK_SOURCE) && result == RESULT_OK && data != null && data.getData() != null) {
             folder = data.getData();
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             try { getContentResolver().takePersistableUriPermission(folder, flags); } catch (SecurityException ignored) { }
-            getPreferences(0).edit().putString("folder", folder.toString()).apply();
-            scan();
+            if (request == PICK_SOURCE) {
+                if (!sources.contains(folder)) sources.add(folder);
+                persistSources();
+                if (settings) showSettings();
+            } else {
+                sources.clear(); sources.add(folder); persistSources(); scan();
+            }
         } else if (request == PICK_FOLDER && folder == null) empty("No folder selected", true);
     }
 
@@ -113,19 +129,21 @@ public final class MainActivity extends Activity {
         loader.execute(() -> {
             ArrayList<Photo> found = new ArrayList<>();
             try {
-                String id = DocumentsContract.getTreeDocumentId(folder);
-                Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(folder, id);
-                try (android.database.Cursor c = getContentResolver().query(children, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
-                    if (c != null) while (c.moveToNext()) {
-                        String mime = c.getString(2), name = c.getString(1);
-                        if (mime != null && mime.startsWith("image/")) found.add(new Photo(DocumentsContract.buildDocumentUriUsingTree(folder, c.getString(0)), name == null ? "" : name, c.getLong(3)));
+                for (Uri source : new ArrayList<>(sources)) {
+                    String id = DocumentsContract.getTreeDocumentId(source);
+                    Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
+                    try (android.database.Cursor c = getContentResolver().query(children, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
+                        if (c != null) while (c.moveToNext()) {
+                            String mime = c.getString(2), name = c.getString(1);
+                            if (mime != null && mime.startsWith("image/")) found.add(new Photo(DocumentsContract.buildDocumentUriUsingTree(source, c.getString(0)), name == null ? "" : name, c.getLong(3)));
+                        }
                     }
                 }
             } catch (Exception e) {
                 runOnUiThread(() -> empty("Folder unavailable. Choose another folder.", true)); return;
             }
             photos.addAll(found);
-            runOnUiThread(() -> { sortPhotos(); showGrid(); });
+            runOnUiThread(() -> { sortPhotos(); if (settings) showSettings(); else showGrid(); });
         });
     }
 
@@ -140,11 +158,83 @@ public final class MainActivity extends Activity {
         photos.sort(cmp);
     }
 
+    private void persistSources() {
+        Set<String> saved = new HashSet<>();
+        for (Uri source : sources) saved.add(source.toString());
+        getPreferences(0).edit().putStringSet("sources", saved).putString("folder", sources.isEmpty() ? "" : sources.get(0).toString()).apply();
+    }
+
+    private void showSettings() {
+        settings = true;
+        root.removeAllViews();
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setGravity(Gravity.CENTER_HORIZONTAL);
+        page.setPadding(dp(32), dp(12), dp(32), dp(12));
+        page.setBackgroundColor(0xff101116);
+        TextView heading = label("Settings", 28);
+        page.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+        TextView category = label("Sources", 21);
+        category.setGravity(Gravity.CENTER_VERTICAL);
+        page.addView(category, new LinearLayout.LayoutParams(-1, -2));
+        for (int i = 0; i < sources.size(); i++) {
+            final Uri source = sources.get(i);
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            TextView name = label(source.getLastPathSegment() == null ? source.toString() : source.getLastPathSegment(), 17);
+            name.setGravity(Gravity.CENTER_VERTICAL);
+            name.setSingleLine(true);
+            row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+            TextView remove = label("[−] Remove", 17);
+            focusable(remove);
+            remove.setOnClickListener(v -> {
+                sources.remove(source);
+                persistSources();
+                if (sources.isEmpty()) { photos.clear(); showGrid(); }
+                else { folder = sources.get(0); scan(); }
+                showSettings();
+            });
+            row.addView(remove);
+            page.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        }
+        TextView add = label("[ + ] Add source", 20);
+        focusable(add);
+        add.setOnClickListener(v -> pickSource());
+        page.addView(add, new LinearLayout.LayoutParams(-1, -2));
+        TextView back = label("[ B ] Back to gallery", 18);
+        focusable(back);
+        back.setOnClickListener(v -> closeSettings());
+        page.addView(back, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(page, new FrameLayout.LayoutParams(-1, -1));
+        View initial = page.getChildAt(Math.max(2, page.getChildCount() - 2));
+        initial.setFocusableInTouchMode(true);
+        initial.requestFocus();
+    }
+
+    private void focusable(View view) {
+        view.setFocusable(true);
+        view.setFocusableInTouchMode(true);
+        view.setBackgroundColor(0xff262832);
+        view.setOnFocusChangeListener((v, focused) -> v.setBackgroundColor(focused ? 0xff167eaa : 0xff262832));
+    }
+
+    private void pickSource() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        if (folder != null && android.os.Build.VERSION.SDK_INT >= 26) intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, folder);
+        startActivityForResult(intent, PICK_SOURCE);
+    }
+
+    private void closeSettings() {
+        settings = false;
+        if (photos.isEmpty()) scan(); else showGrid();
+    }
+
     private void showGrid() {
         viewing = false; root.removeAllViews();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff101116);
-        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
+         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         TextView folderButton = label("The Gallery   ▾", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
+        TextView settingsButton = label("[START] Settings", 16); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
         status = label(SORTS[sort] + "  ·  " + photos.size() + " images    [X] Sort", 16); bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
@@ -229,10 +319,11 @@ public final class MainActivity extends Activity {
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) beginExitHold();
-            if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (viewing) showGrid(); else if (folder == null) pickFolder(); }
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) beginExitHold();
+            if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); }
             return true;
         }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && photos.isEmpty() && (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER)) { pickFolder(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && (key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_X)) { sort = (sort + 1) % SORTS.length; sortPhotos(); selected = Math.min(selected, Math.max(0, photos.size() - 1)); showGrid(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
