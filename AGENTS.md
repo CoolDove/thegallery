@@ -29,7 +29,7 @@ The Gallery is an offline image viewer for Android handheld gaming devices, prim
 
 ## Technical decisions pending
 
-- Android SDK / minimum supported Android version.
+- Android SDK / minimum supported Android version. A practical initial recommendation is compile/target SDK 36 (Android 16) with min SDK 28 (Android 9), subject to confirming the target handheld devices and their Android versions. SAF folder selection and persisted URI access work on older Android versions too, so raise min SDK only if device requirements or chosen libraries require it.
 - App language, UI framework, and build setup.
 - Thumbnail presentation and performance limits.
 - Exact touch gestures and remaining controller mappings.
