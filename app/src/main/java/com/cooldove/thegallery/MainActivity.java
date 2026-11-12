@@ -284,7 +284,7 @@ public final class MainActivity extends Activity {
             View child = grid.getChildAt(i);
             boolean active = first + i == selected;
             GradientDrawable outline = new GradientDrawable();
-            outline.setColor(0xff262832);
+            outline.setColor(0xff403f77);
             if (active) outline.setStroke(dp(3), 0xff59c8ff);
             child.setBackground(outline);
         }
@@ -321,9 +321,24 @@ public final class MainActivity extends Activity {
         @Override public View getView(int position, View recycled, ViewGroup parent) {
             FrameLayout cell = recycled instanceof FrameLayout ? (FrameLayout) recycled : new FrameLayout(MainActivity.this);
             ImageView image;
-            if (cell.getChildCount() == 0) { image = new ImageView(MainActivity.this); image.setScaleType(ImageView.ScaleType.FIT_CENTER); FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(176), Gravity.TOP); cell.addView(image, imageParams); TextView name = label("", 13); name.setBackgroundColor(0x99000000); name.setSingleLine(true); name.setEllipsize(android.text.TextUtils.TruncateAt.END); FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(44), Gravity.BOTTOM); cell.addView(name, lp); }
+            if (cell.getChildCount() == 0) {
+                image = new ImageView(MainActivity.this);
+                image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                image.setBackgroundColor(0xffffffff);
+                image.setPadding(dp(8), dp(8), dp(8), dp(8));
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(176), Gravity.TOP);
+                imageParams.setMargins(dp(4), dp(4), dp(4), 0);
+                cell.addView(image, imageParams);
+                TextView name = label("", 13);
+                name.setGravity(Gravity.TOP | Gravity.LEFT);
+                name.setPadding(dp(10), dp(7), dp(10), dp(4));
+                name.setMaxLines(2);
+                name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM);
+                cell.addView(name, lp);
+            }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); Photo photo = photos.get(position); name.setText(photo.name);
-            cell.setBackgroundColor(0xff262832);
+            cell.setBackgroundColor(0xff403f77);
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(220)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
