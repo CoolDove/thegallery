@@ -284,7 +284,7 @@ public final class MainActivity extends Activity {
             View child = grid.getChildAt(i);
             boolean active = first + i == selected;
             GradientDrawable outline = new GradientDrawable();
-            outline.setColor(0xff403f77);
+            outline.setColor(0xff292833);
             if (active) outline.setStroke(dp(3), 0xff59c8ff);
             child.setBackground(outline);
         }
@@ -337,7 +337,7 @@ public final class MainActivity extends Activity {
                 cell.addView(name, lp);
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); Photo photo = photos.get(position); name.setText(photo.name);
-            cell.setBackgroundColor(0xff403f77);
+            cell.setBackgroundColor(0xff292833);
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(220)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
