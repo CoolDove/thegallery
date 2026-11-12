@@ -29,7 +29,16 @@ The Gallery is an offline image viewer for Android handheld gaming devices, prim
 
 ## Technical decisions pending
 
-- Android SDK / minimum supported Android version. Target hardware may include Android 11 / API 30; min SDK 28 (Android 9) is acceptable. Keep target SDK decision open: a lower target does not generally improve compatibility and can restrict newer platform behavior; choose a currently supported target after checking Google Play/distribution requirements and testing on API 30 hardware.
-- App language and build setup. Controller-first input behavior is a top-level requirement; evaluate UI framework choices against robust D-pad/physical-key handling, focus visibility, and predictable navigation before selecting one. Jetpack Compose is acceptable only if these controller requirements are met and validated.
+- Android SDK: min SDK 28 (Android 9), target SDK 35 (Android 15). Target hardware includes Android 11 / API 30; verify on API 30 devices. Distribution is outside Google Play, but target 35 is selected conservatively.
+- Native Android project using Java and Android Views to give direct control over controller focus and standard key events. Default Android controller key mappings are used; do not add remapping settings unless required later.
+- Controller-first input behavior is a top-level requirement. Keep focus visible and directional movement predictable; validate D-pad, A/B/X, and long-press behavior on target hardware.
 - Thumbnail presentation and performance limits. Expect folders containing thousands of images; first phase should use a virtualized grid, asynchronous thumbnail loading, and a bounded in-memory thumbnail cache rather than loading full-resolution images into the grid.
 - Exact touch gestures and remaining controller mappings.
+
+## Android project baseline
+
+- Application ID: `com.cooldove.thegallery`.
+- Compile SDK: 35; target SDK: 35; min SDK: 28.
+- Landscape orientation.
+- Java + Android Views; no network permission or network-related dependencies.
+- Use a virtualized grid and asynchronous thumbnail loading with bounded caching for large folders.
