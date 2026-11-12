@@ -324,10 +324,6 @@ public final class MainActivity extends Activity {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setPadding(dp(8), dp(8), dp(8), dp(8));
-                GradientDrawable imageBackground = new GradientDrawable();
-                imageBackground.setColor(0xff77747e);
-                imageBackground.setCornerRadius(dp(6));
-                image.setBackground(imageBackground);
                 FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(150), Gravity.TOP);
                 imageParams.setMargins(dp(4), dp(4), dp(4), 0);
                 cell.addView(image, imageParams);
@@ -340,7 +336,10 @@ public final class MainActivity extends Activity {
                 cell.addView(name, lp);
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); Photo photo = photos.get(position); name.setText(photo.name);
-            cell.setBackgroundColor(0xff35383d);
+            GradientDrawable cellBackground = new GradientDrawable();
+            cellBackground.setColor(0xff35383d);
+            cellBackground.setCornerRadius(dp(6));
+            cell.setBackground(cellBackground);
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(208)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
