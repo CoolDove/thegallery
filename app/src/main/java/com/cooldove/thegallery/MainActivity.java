@@ -67,7 +67,9 @@ public final class MainActivity extends Activity {
     private boolean transitionWaiting;
     private boolean transitionStarted;
     private ProgressBar exitProgress;
+    private TextView exitHint;
     private Runnable exitRunnable;
+    private Runnable exitHintRunnable;
 
     private static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -88,7 +90,7 @@ public final class MainActivity extends Activity {
         root.removeAllViews();
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setGravity(Gravity.CENTER);
         TextView title = label(text, 25); box.addView(title);
-        if (allowPicker) { TextView choose = label("[ A ] Choose folder", 20); choose.setFocusable(true); choose.setFocusableInTouchMode(true); choose.setOnClickListener(v -> pickFolder()); box.addView(choose); choose.requestFocus(); }
+        if (allowPicker) { View choose = prompt("switch_a_96dpi", "Choose folder", 20); choose.setFocusable(true); choose.setFocusableInTouchMode(true); choose.setOnClickListener(v -> pickFolder()); box.addView(choose); choose.requestFocus(); }
         root.addView(box, new FrameLayout.LayoutParams(-1, -1));
         status = title;
     }
@@ -150,8 +152,8 @@ public final class MainActivity extends Activity {
         viewing = false; root.removeAllViews();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff101116);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
-        TextView folderButton = label("The Gallery   ▾", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
-        status = label(SORTS[sort] + "  ·  " + photos.size() + " images    [X] Sort", 16); bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+        View folderButton = prompt("switch_plus_96dpi", "Folder", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
+        status = label(SORTS[sort] + "  ·  " + photos.size() + " images", 16); bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
         grid.setOnItemClickListener((parent, view, position, id) -> { selected = position; openPhoto(); });
@@ -160,6 +162,11 @@ public final class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
+        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff191b22);
+        controls.addView(prompt("switch_a_96dpi", "View", 15));
+        controls.addView(prompt("switch_x_96dpi", "Sort", 15));
+        controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
+        layout.addView(controls, new LinearLayout.LayoutParams(-1, -2));
         if (photos.isEmpty()) { empty("No images here. Choose another folder.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
@@ -179,6 +186,28 @@ public final class MainActivity extends Activity {
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private ImageView icon(String iconName) {
+        ImageView icon = new ImageView(this);
+        int id = getResources().getIdentifier(iconName, "drawable", getPackageName());
+        if (id != 0) icon.setImageResource(id);
+        icon.setLayoutParams(new LinearLayout.LayoutParams(dp(28), dp(28)));
+        return icon;
+    }
+
+    private View prompt(String iconName, String text, int textSize) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(10), dp(6), dp(10), dp(6));
+        ImageView icon = icon(iconName);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(28), dp(28));
+        iconParams.rightMargin = dp(7);
+        row.addView(icon, iconParams);
+        TextView caption = label(text, textSize);
+        caption.setPadding(0, 0, 0, 0);
+        row.addView(caption);
+        return row;
+    }
 
     private final class PhotoAdapter extends BaseAdapter {
         @Override public int getCount() { return photos.size(); }
@@ -293,6 +322,10 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (!viewing && key == KeyEvent.KEYCODE_BUTTON_START) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && grid != null) grid.requestFocus();
+            return true;
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) beginExitHold();
             if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (viewing) showGrid(); else if (folder == null) pickFolder(); }
@@ -304,6 +337,7 @@ public final class MainActivity extends Activity {
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_BUTTON_A)) { if (grid == null || photos.isEmpty()) { pickFolder(); return true; } int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             if (grid == null || photos.isEmpty()) return true;
+            grid.requestFocus();
             if (grid.getSelectedItemPosition() >= 0) selected = grid.getSelectedItemPosition();
             if (key == KeyEvent.KEYCODE_DPAD_LEFT) selected = Math.max(0, selected - 1);
             else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) selected = Math.min(photos.size() - 1, selected + 1);
@@ -322,10 +356,18 @@ public final class MainActivity extends Activity {
         if (exitRunnable != null) return;
         exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(1500); exitProgress.setProgress(0);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(8), Gravity.BOTTOM); root.addView(exitProgress, lp);
+        exitHint = label("长按B退出应用", 16);
+        exitHint.setBackgroundColor(0xaa191b22);
+        exitHint.setVisibility(View.GONE);
+        FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
+        hintParams.bottomMargin = dp(8);
+        root.addView(exitHint, hintParams);
+        exitHintRunnable = () -> { if (exitHint != null) exitHint.setVisibility(View.VISIBLE); };
+        handler.postDelayed(exitHintRunnable, 300);
         long started = android.os.SystemClock.uptimeMillis();
         exitRunnable = new Runnable() { @Override public void run() { int progress = (int)(android.os.SystemClock.uptimeMillis() - started); if (exitProgress != null) exitProgress.setProgress(progress); if (progress >= 1500) finish(); else handler.postDelayed(this, 30); } };
         handler.post(exitRunnable);
     }
-    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; if (exitProgress != null) root.removeView(exitProgress); exitProgress = null; }
+    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); if (exitHintRunnable != null) handler.removeCallbacks(exitHintRunnable); exitRunnable = null; exitHintRunnable = null; if (exitProgress != null) root.removeView(exitProgress); if (exitHint != null) root.removeView(exitHint); exitProgress = null; exitHint = null; }
     @Override protected void onDestroy() { super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
