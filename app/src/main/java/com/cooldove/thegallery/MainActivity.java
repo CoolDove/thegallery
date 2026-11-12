@@ -247,10 +247,6 @@ public final class MainActivity extends Activity {
         if (photos.isEmpty()) return;
         viewing = true; root.removeAllViews();
         fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff08090c); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xaa191b22);
-        controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
-        FrameLayout.LayoutParams controlParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-        root.addView(controls, controlParams);
         displayPhoto(); fullImage.requestFocus();
     }
 
