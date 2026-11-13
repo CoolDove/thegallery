@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Bitmap;
@@ -894,7 +896,19 @@ public final class MainActivity extends Activity {
     }
     private void showShareUi(Photo photo, String url) {
         viewing = false; sharing = true; closeWheel(); removePromptOverlay(); root.removeAllViews(); root.setBackgroundColor(0xff181a1d);
+        ImageView background = new ImageView(this);
+        background.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.42f,0,0,0,0, 0,0.42f,0,0,0, 0,0,0.42f,0,0, 0,0,0,1,0})));
+        root.addView(background, new FrameLayout.LayoutParams(-1, -1));
+        loader.execute(() -> {
+            Bitmap image = decode(photo, 1400);
+            if (image != null) runOnUiThread(() -> { if (sharing && background.getParent() == root) background.setImageBitmap(image); });
+        });
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0x66000000);
+        root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(10), dp(24), dp(148));
+        content.setBackgroundColor(0x22000000);
         TextView filename = label(photo.name, 18); filename.setSingleLine(true); content.addView(filename);
         try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240); Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565); for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); qrView.setScaleType(ImageView.ScaleType.FIT_CENTER); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(190), dp(190)); qrParams.topMargin = dp(6); qrParams.bottomMargin = dp(6); content.addView(qrView, qrParams); } catch (Exception ignored) { }
         TextView path = label(url, 16); path.setTextIsSelectable(true); path.setSingleLine(true); path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); path.setPadding(dp(12), dp(6), dp(12), dp(6)); content.addView(path);
