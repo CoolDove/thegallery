@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -19,7 +21,6 @@ import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.InputStream;
@@ -38,10 +39,19 @@ public final class MainActivity extends Activity {
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
     private static final int EXIT_HOLD_DURATION_MS = 1000;
+    private static final int LONG_PRESS_MS = 550;
+    private static final int HOLD_HINT_DELAY_MS = 150;
     private static final int PICK_FOLDER = 1;
     private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
-    private static final String[] SORTS = {"Newest", "Oldest", "Name A–Z", "Name Z–A"};
+    private static final String[] SORTS = {"Newest", "Oldest", "Name A-Z", "Name Z-A"};
+    /** Shared geometry so the XYAB prompt panel and the D-pad wheel line up exactly. */
+    private static final int CLUSTER_BUTTON_DP = 26;
+    private static final int CLUSTER_INTERVAL_DP = 30;
+    private static final int CLUSTER_WIDTH_DP = 250;
+    private static final int CLUSTER_HEIGHT_DP = 124;
+    private static final int CLUSTER_CENTER_X_DP = 107;
+    private static final long OVERLAY_FADE_MS = 140;
     private final ArrayList<Photo> photos = new ArrayList<>();
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
@@ -54,6 +64,7 @@ public final class MainActivity extends Activity {
     private FrameLayout root;
     private GridView grid;
     private TextView status;
+    private TextView summary;
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
@@ -75,10 +86,25 @@ public final class MainActivity extends Activity {
     private ImageView incomingImage;
     private int photoTransition;
     private Runnable photoExitRunnable;
-    private ProgressBar exitProgress;
-    private TextView exitHint;
     private Runnable exitRunnable;
-    private Runnable exitHintRunnable;
+    private View promptOverlay;
+    private View radialOverlay;
+    private View deleteOverlay;
+    private final Set<Integer> pressedKeys = new HashSet<>();
+    private final Set<Integer> swallowedKeyUps = new HashSet<>();
+    private HoldRing holdRing;
+    private Runnable holdRingTick;
+    private long holdRingDuration = LONG_PRESS_MS;
+    private int heldButton = KeyEvent.KEYCODE_UNKNOWN;
+    private long heldButtonAt;
+    private boolean longPressTriggered;
+    private Runnable longPressRunnable;
+    private Runnable holdHintRunnable;
+    private int sortDirection;
+    private int imageSizeMode;
+    private int[] activeWheelActions;
+    private int[] wheelToggleActions;
+    private boolean wheelUsesFaceButton;
 
     private static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -208,20 +234,23 @@ public final class MainActivity extends Activity {
                 showSettings();
             });
             row.addView(remove);
-            page.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.topMargin = dp(6);
+            page.addView(row, rowParams);
         }
         TextView add = label("Add source", 20);
         focusable(add);
         settingsActions.add(add);
         add.setOnClickListener(v -> pickSource());
-        page.addView(add, new LinearLayout.LayoutParams(-1, -2));
-        View back = prompt("switch_b_96dpi", "Back to gallery", 18);
-        focusable(back);
-        settingsActions.add(back);
-        back.setOnClickListener(v -> closeSettings());
-        page.addView(back, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, -2);
+        addParams.topMargin = dp(6);
+        page.addView(add, addParams);
         root.addView(page, new FrameLayout.LayoutParams(-1, -1));
-        settingsFocus = Math.max(0, settingsActions.size() - 2);
+        FrameLayout backCluster = new FrameLayout(this);
+        addClusterButton(backCluster, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0);
+        backCluster.setOnClickListener(v -> closeSettings());
+        root.addView(backCluster, clusterParams(Gravity.RIGHT));
+        settingsFocus = Math.max(0, settingsActions.size() - 1);
         focusSettingsAction();
     }
 
@@ -252,12 +281,14 @@ public final class MainActivity extends Activity {
     }
 
     private void showGrid() {
-        viewing = false; root.removeAllViews();
+        viewing = false; closeWheel(); removePromptOverlay(); deleteOverlay = null; swallowedKeyUps.clear(); root.removeAllViews();
+        cancelButtonHold();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
-        View folderButton = prompt("switch_plus_96dpi", "Folder", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
-        View settingsButton = prompt("switch_start_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
-        status = label(SORTS[sort] + "  ·  " + photos.size() + " images", 16); bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+        View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
+        status = null;
+        summary = label("", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
+        refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
         grid.setOnItemClickListener((parent, view, position, id) -> { selected = position; openPhoto(); });
@@ -266,15 +297,16 @@ public final class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
-        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff222529);
-        controls.addView(prompt("switch_a_96dpi", "View", 15));
-        controls.addView(prompt("switch_x_96dpi", "Sort", 15));
-        controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
-        layout.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        addButtonPrompts(false);
         if (photos.isEmpty()) { empty("No images here. Choose another folder.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
         grid.setSelection(selected); grid.requestFocus(); grid.post(() -> { if (grid != null) { grid.requestFocus(); updateGridHighlight(); } });
+    }
+
+    private void refreshSummary() {
+        if (summary == null) return;
+        summary.setText(SORTS[sort] + " | " + photos.size() + " images");
     }
 
     private void updateGridHighlight() {
@@ -379,6 +411,7 @@ public final class MainActivity extends Activity {
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
+        addButtonPrompts(false);
     }
 
     private void displayPhoto() {
@@ -429,6 +462,23 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (event.getRepeatCount() == 0) pressedKeys.add(key);
+        } else if (event.getAction() == KeyEvent.ACTION_UP) {
+            pressedKeys.remove(key);
+        }
+        if (deleteOverlay != null) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                // Releases of keys that were already held when the confirm opened are swallowed once.
+                if (swallowedKeyUps.remove(key)) return true;
+                if (key == KeyEvent.KEYCODE_BUTTON_A) { closeDeleteConfirm(); deleteCurrentPhoto(); }
+                else if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) closeDeleteConfirm();
+            }
+            return true;
+        }
+        if (radialOverlay != null) {
+            return handleWheelKey(event);
+        }
         if (settings) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
@@ -440,19 +490,47 @@ public final class MainActivity extends Activity {
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
                 }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) { closeSettings(); return true; }
+                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
             }
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) beginExitHold();
-            if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == KeyEvent.KEYCODE_BUTTON_B && radialOverlay == null) {
+                boolean wasLongPress = longPressTriggered;
+                boolean passedHint = holdPassedHint();
+                cancelButtonHold();
+                if (!wasLongPress && !passedHint && viewing) showGrid();
+                else if (!wasLongPress && !passedHint && folder == null) pickFolder();
+                else if (!viewing) addButtonPrompts(false);
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); boolean wasLongPress = longPressTriggered; heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (!wasLongPress && viewing) showGrid(); else addButtonPrompts(false); return true; }
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                boolean passedHint = holdPassedHint();
+                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held && !passedHint) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); } else if (!viewing) addButtonPrompts(false); }
+                else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); }
+            }
             return true;
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && photos.isEmpty() && (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER)) { pickFolder(); return true; }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && (key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_X)) { sort = (sort + 1) % SORTS.length; sortPhotos(); selected = Math.min(selected, Math.max(0, photos.size() - 1)); showGrid(); return true; }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
+        if (key == KeyEvent.KEYCODE_BUTTON_Y) return true;
+        if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) startButtonHold(key);
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key) {
+                boolean wasLongPress = longPressTriggered;
+                boolean passedHint = holdPassedHint();
+                cancelButtonHold();
+                if (!wasLongPress && !passedHint) performFaceButtonShortPress(key);
+                if (!viewing) addButtonPrompts(false);
+                return true;
+            }
+            return true;
+        }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && !photos.isEmpty() && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_BUTTON_A)) { if (grid == null || photos.isEmpty()) { pickFolder(); return true; } int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             if (grid == null || photos.isEmpty()) return true;
@@ -471,22 +549,332 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
-    private void beginExitHold() {
-        if (exitRunnable != null) return;
-        exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(EXIT_HOLD_DURATION_MS); exitProgress.setProgress(0);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(8), Gravity.BOTTOM); root.addView(exitProgress, lp);
-        exitHint = label("长按B退出应用", 16);
-        exitHint.setBackgroundColor(0xaa222529);
-        exitHint.setVisibility(View.GONE);
-        FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-        hintParams.bottomMargin = dp(8);
-        root.addView(exitHint, hintParams);
-        exitHintRunnable = () -> { if (exitHint != null) exitHint.setVisibility(View.VISIBLE); };
-        handler.postDelayed(exitHintRunnable, 300);
-        long started = android.os.SystemClock.uptimeMillis();
-        exitRunnable = new Runnable() { @Override public void run() { int progress = (int)(android.os.SystemClock.uptimeMillis() - started); if (exitProgress != null) exitProgress.setProgress(Math.min(progress, EXIT_HOLD_DURATION_MS)); if (progress >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
-        handler.post(exitRunnable);
+    private void performFaceButtonShortPress(int key) {
+        if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) {
+            if (photos.isEmpty()) { pickFolder(); return; }
+            int focused = grid == null ? -1 : grid.getSelectedItemPosition();
+            if (focused >= 0) selected = focused;
+            openPhoto();
+        } else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
+            sort = (sort + 1) % SORTS.length;
+            sortPhotos();
+            selected = Math.min(selected, Math.max(0, photos.size() - 1));
+            showGrid();
+        }
     }
-    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); if (exitHintRunnable != null) handler.removeCallbacks(exitHintRunnable); exitRunnable = null; exitHintRunnable = null; if (exitProgress != null) root.removeView(exitProgress); if (exitHint != null) root.removeView(exitHint); exitProgress = null; exitHint = null; }
+
+    private void applySortFromWheel() {
+        String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
+        sort = (sort + 1) % SORTS.length;
+        sortPhotos();
+        if (selectedName != null) {
+            for (int i = 0; i < photos.size(); i++) if (selectedName.equals(photos.get(i).name)) { selected = i; break; }
+        }
+        if (grid != null) {
+            ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+            grid.setSelection(selected);
+            refreshSummary();
+        }
+    }
+
+    private void startButtonHold(int key) {
+        if (heldButton != KeyEvent.KEYCODE_UNKNOWN) return;
+        heldButton = key; heldButtonAt = android.os.SystemClock.uptimeMillis(); longPressTriggered = false;
+        boolean holdAction = key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_X || (key == KeyEvent.KEYCODE_BUTTON_A && !viewing);
+        if (holdAction) {
+            holdHintRunnable = () -> { if (heldButton != key) return; addButtonPrompts(true); };
+            handler.postDelayed(holdHintRunnable, HOLD_HINT_DELAY_MS);
+        }
+        if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+            exitRunnable = new Runnable() { @Override public void run() { if (android.os.SystemClock.uptimeMillis() - heldButtonAt >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
+            handler.post(exitRunnable);
+        } else {
+            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel(new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
+            handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
+        }
+    }
+
+    /** True once the press has lasted long enough that short-press behavior must be suppressed. */
+    private boolean holdPassedHint() {
+        return heldButton != KeyEvent.KEYCODE_UNKNOWN && android.os.SystemClock.uptimeMillis() - heldButtonAt >= HOLD_HINT_DELAY_MS;
+    }
+
+    private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; if (holdHintRunnable != null) handler.removeCallbacks(holdHintRunnable); holdHintRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
+    private String imageSizeLabel() { return new String[]{"Small", "Big", "List"}[imageSizeMode]; }
+    private void addButtonPrompts(boolean holding) {
+        removePromptOverlay();
+        if (root == null || viewing && !holding) return;
+        FrameLayout cluster = new FrameLayout(this);
+        // cluster.setBackgroundColor(0x99000000);
+        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
+        String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
+        String y = viewing ? "" : "Select";
+        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
+        int diameter = dp(CLUSTER_BUTTON_DP);
+        int interval = CLUSTER_INTERVAL_DP;
+        int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
+        boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
+        boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
+        boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0);
+        addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0);
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0);
+        root.addView(cluster, clusterParams(Gravity.RIGHT));
+        promptOverlay = cluster;
+    }
+
+    private FrameLayout.LayoutParams clusterParams(int horizontalGravity) {
+        return new FrameLayout.LayoutParams(dp(CLUSTER_WIDTH_DP), dp(CLUSTER_HEIGHT_DP), horizontalGravity | Gravity.BOTTOM);
+    }
+    /** captionSide marks the side of the button icon the caption is placed on: TOP = above, BOTTOM = below, LEFT = start, RIGHT = end. holdRingDuration > 0 draws a hold ring around this same icon. */
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration);
+    }
+    private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
+        iconParams.leftMargin = cx - diameter / 2;
+        iconParams.topMargin = cy - diameter / 2;
+        cluster.addView(buttonIcon, iconParams);
+        if (holdRingDuration > 0) addHoldRing(cluster, cx, cy, diameter + dp(10), holdRingDuration);
+        if (caption.isEmpty()) return;
+
+        TextView text = label(caption, 12);
+        text.setPadding(dp(4), dp(2), dp(4), dp(2));
+        text.setBackgroundColor(0xcc111315);
+        int unspecified = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+        text.measure(unspecified, unspecified);
+        int textWidth = text.getMeasuredWidth();
+        int textHeight = text.getMeasuredHeight();
+        int gap = dp(3);
+        int radius = diameter / 2 + gap;
+        int textCenterX = cx;
+        int textCenterY = cy;
+        if (captionSide == Gravity.TOP) textCenterY = cy - radius - textHeight / 2;
+        else if (captionSide == Gravity.BOTTOM) textCenterY = cy + radius + textHeight / 2;
+        else if (captionSide == Gravity.LEFT) textCenterX = cx - radius - textWidth / 2;
+        else if (captionSide == Gravity.RIGHT) textCenterX = cx + radius + textWidth / 2;
+        FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(textWidth, textHeight, Gravity.TOP | Gravity.LEFT);
+        textParams.leftMargin = textCenterX - textWidth / 2;
+        textParams.topMargin = textCenterY - textHeight / 2;
+        cluster.addView(text, textParams);
+    }
+    private void addHoldRing(FrameLayout cluster, int cx, int cy, int size, long duration) {
+        HoldRing ring = new HoldRing();
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.LEFT);
+        params.leftMargin = cx - size / 2;
+        params.topMargin = cy - size / 2;
+        cluster.addView(ring, params);
+        stopHoldRingTicker();
+        holdRing = ring;
+        holdRingDuration = duration;
+        holdRingTick = new Runnable() {
+            @Override public void run() {
+                if (holdRing == null) { holdRingTick = null; return; }
+                long elapsed = android.os.SystemClock.uptimeMillis() - heldButtonAt;
+                holdRing.setProgress(Math.min(1f, elapsed / (float) holdRingDuration));
+                if (elapsed < holdRingDuration) handler.postDelayed(this, 16);
+            }
+        };
+        handler.post(holdRingTick);
+    }
+    private void stopHoldRingTicker() {
+        if (holdRingTick != null) handler.removeCallbacks(holdRingTick);
+        holdRingTick = null;
+        holdRing = null;
+    }
+    private final class HoldRing extends View {
+        private final Paint trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint progressPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float progress;
+        HoldRing() {
+            super(MainActivity.this);
+            trackPaint.setStyle(Paint.Style.STROKE);
+            trackPaint.setStrokeWidth(dp(3));
+            trackPaint.setColor(0x40ffffff);
+            progressPaint.setStyle(Paint.Style.STROKE);
+            progressPaint.setStrokeWidth(dp(3));
+            progressPaint.setStrokeCap(Paint.Cap.ROUND);
+            progressPaint.setColor(0xffffffff);
+        }
+        void setProgress(float value) {
+            if (progress == value) return;
+            progress = value;
+            invalidate();
+        }
+        @Override protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float radius = (Math.min(getWidth(), getHeight()) - dp(3)) / 2f;
+            canvas.drawCircle(cx, cy, radius, trackPaint);
+            if (progress > 0f) canvas.drawArc(cx - radius, cy - radius, cx + radius, cy + radius, -90f, 360f * progress, false, progressPaint);
+        }
+    }
+    private void removePromptOverlay() { stopHoldRingTicker(); if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
+
+    private void showWheel(String[] labels, int[] actions) {
+        showWheel(labels, actions, new int[4]);
+    }
+    private void showWheel(String[] labels, int[] actions, int[] toggles) {
+        boolean appearing = radialOverlay == null;
+        removeWheelOverlay();
+        activeWheelActions = actions;
+        wheelToggleActions = toggles;
+        wheelUsesFaceButton = heldButton == KeyEvent.KEYCODE_BUTTON_A || heldButton == KeyEvent.KEYCODE_BUTTON_X || heldButton == KeyEvent.KEYCODE_BUTTON_Y;
+        FrameLayout cluster = new FrameLayout(this);
+        int diameter = dp(CLUSTER_BUTTON_DP);
+        int interval = CLUSTER_INTERVAL_DP;
+        int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
+        addClusterButton(cluster, new DpadIcon(DPAD_UP), labels[0], centerX, centerY - dp(interval), diameter, Gravity.RIGHT, 0);
+        addClusterButton(cluster, new DpadIcon(DPAD_DOWN), labels[1], centerX, centerY + dp(interval), diameter, Gravity.RIGHT, 0);
+        addClusterButton(cluster, new DpadIcon(DPAD_LEFT), labels[2], centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
+        addClusterButton(cluster, new DpadIcon(DPAD_RIGHT), labels[3], centerX + dp(interval), centerY, diameter, Gravity.RIGHT, 0);
+        FrameLayout overlay = new FrameLayout(this);
+        View scrim = new View(this);
+        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x00000000, 0x59000000, 0x99000000}));
+        overlay.addView(scrim, new FrameLayout.LayoutParams(-1, dp(CLUSTER_HEIGHT_DP), Gravity.BOTTOM));
+        overlay.addView(cluster, clusterParams(Gravity.LEFT));
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        radialOverlay = overlay;
+        if (appearing) {
+            overlay.setAlpha(0f);
+            overlay.animate().alpha(1f).setDuration(OVERLAY_FADE_MS).start();
+        }
+    }
+    private boolean handleWheelKey(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_UP && wheelUsesFaceButton && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
+        if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
+        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
+        if (direction == heldButton || e.getRepeatCount() > 0) return true;
+        int index = direction == KeyEvent.KEYCODE_DPAD_UP ? 0 : direction == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : direction == KeyEvent.KEYCODE_DPAD_LEFT ? 2 : direction == KeyEvent.KEYCODE_DPAD_RIGHT ? 3 : -1;
+        if (index < 0) return true;
+        int action = activeWheelActions == null ? 0 : activeWheelActions[index];
+        int toggle = wheelToggleActions == null ? 0 : wheelToggleActions[index];
+        if (toggle == 1) applySortFromWheel();
+        else if (toggle == 2) imageSizeMode = (imageSizeMode + 1) % 3;
+        if (toggle != 0) {
+            showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
+        } else {
+            closeWheel();
+            if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
+        }
+        return true;
+    }
+    private static final int DPAD_UP = 0, DPAD_DOWN = 1, DPAD_LEFT = 2, DPAD_RIGHT = 3;
+
+    private final class DpadIcon extends View {
+        private final int direction;
+        private final Paint circlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint armPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint activeArmPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        DpadIcon(int direction) {
+            super(MainActivity.this);
+            this.direction = direction;
+            circlePaint.setStyle(Paint.Style.FILL);
+            circlePaint.setColor(0xff384162);
+            ringPaint.setStyle(Paint.Style.STROKE);
+            ringPaint.setStrokeWidth(dp(2));
+            ringPaint.setColor(0xffd7dde5);
+            armPaint.setColor(0x59d3e1e7);
+            activeArmPaint.setColor(0xffd3e1e7);
+        }
+        @Override protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float radius = Math.min(getWidth(), getHeight()) / 2f - dp(1);
+            canvas.drawCircle(cx, cy, radius, circlePaint);
+            canvas.drawCircle(cx, cy, radius - dp(1), ringPaint);
+            float halfThickness = radius * 0.19f;
+            float corner = halfThickness;
+            for (int side = DPAD_UP; side <= DPAD_RIGHT; side++) {
+                boolean active = side == direction;
+                Paint paint = active ? activeArmPaint : armPaint;
+                float length = radius * (active ? 0.78f : 0.58f);
+                if (side == DPAD_UP) canvas.drawRoundRect(cx - halfThickness, cy - length, cx + halfThickness, cy, corner, corner, paint);
+                else if (side == DPAD_DOWN) canvas.drawRoundRect(cx - halfThickness, cy, cx + halfThickness, cy + length, corner, corner, paint);
+                else if (side == DPAD_LEFT) canvas.drawRoundRect(cx - length, cy - halfThickness, cx, cy + halfThickness, corner, corner, paint);
+                else canvas.drawRoundRect(cx, cy - halfThickness, cx + length, cy + halfThickness, corner, corner, paint);
+            }
+        }
+    }
+
+    private void closeWheel() {
+        View closing = radialOverlay;
+        radialOverlay = null;
+        activeWheelActions = null;
+        wheelToggleActions = null;
+        wheelUsesFaceButton = false;
+        if (closing != null && closing.getParent() == root) {
+            closing.animate().alpha(0f).setDuration(OVERLAY_FADE_MS).withEndAction(() -> root.removeView(closing)).start();
+        }
+    }
+    private void removeWheelOverlay() {
+        if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay);
+        radialOverlay = null;
+    }
+    private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
+    private void showDeleteConfirmation() {
+        if (photos.isEmpty() || deleteOverlay != null) return;
+        // The key that opened this confirm is usually still held; its release must not confirm.
+        cancelButtonHold();
+        swallowedKeyUps.clear();
+        swallowedKeyUps.addAll(pressedKeys);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable panelBackground = new GradientDrawable();
+        panelBackground.setColor(0xff272b30);
+        panelBackground.setCornerRadius(dp(16));
+        panel.setBackground(panelBackground);
+        TextView message = label("Delete this image?", 20);
+        message.setPadding(dp(24), dp(24), dp(24), dp(20));
+        panel.addView(message, new LinearLayout.LayoutParams(-1, -2));
+        View divider = new View(this);
+        divider.setBackgroundColor(0xff3a3f46);
+        panel.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        View confirm = dialogButton("switch_a_96dpi", "Delete");
+        View cancel = dialogButton("switch_b_96dpi", "Cancel");
+        row.addView(confirm, new LinearLayout.LayoutParams(0, -2, 1));
+        row.addView(cancel, new LinearLayout.LayoutParams(0, -2, 1));
+        panel.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(0x99000000);
+        overlay.setClickable(true);
+        overlay.setOnClickListener(v -> closeDeleteConfirm());
+        overlay.addView(panel, new FrameLayout.LayoutParams(dp(400), -2, Gravity.CENTER));
+        confirm.setOnClickListener(v -> { closeDeleteConfirm(); deleteCurrentPhoto(); });
+        cancel.setOnClickListener(v -> closeDeleteConfirm());
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        deleteOverlay = overlay;
+        overlay.setAlpha(0f);
+        overlay.animate().alpha(1f).setDuration(OVERLAY_FADE_MS).start();
+    }
+    private void closeDeleteConfirm() {
+        View closing = deleteOverlay;
+        deleteOverlay = null;
+        swallowedKeyUps.clear();
+        if (closing != null && closing.getParent() == root) {
+            closing.animate().alpha(0f).setDuration(OVERLAY_FADE_MS).withEndAction(() -> root.removeView(closing)).start();
+        }
+        if (!viewing) addButtonPrompts(false);
+    }
+    /** Dialog action button: controller icon + caption, never focusable so the d-pad cannot select it. */
+    private View dialogButton(String iconName, String text) {
+        LinearLayout button = new LinearLayout(this);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(16), dp(18), dp(16), dp(18));
+        button.setFocusable(false);
+        button.setFocusableInTouchMode(false);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        iconParams.rightMargin = dp(8);
+        button.addView(icon(iconName), iconParams);
+        TextView caption = label(text, 17);
+        caption.setPadding(0, 0, 0, 0);
+        button.addView(caption);
+        return button;
+    }
+    private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
+
+    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
     @Override protected void onDestroy() { super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
