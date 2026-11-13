@@ -467,7 +467,7 @@ public final class MainActivity extends Activity {
                 else if (!wasLongPress && folder == null) pickFolder();
                 return true;
             }
-            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); boolean wasLongPress = longPressTriggered; heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (!wasLongPress && viewing) showGrid(); else addButtonPrompts(false); return true; }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); } }
@@ -489,7 +489,7 @@ public final class MainActivity extends Activity {
             }
             return true;
         }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && !photos.isEmpty() && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_BUTTON_A)) { if (grid == null || photos.isEmpty()) { pickFolder(); return true; } int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             if (grid == null || photos.isEmpty()) return true;
@@ -598,7 +598,7 @@ public final class MainActivity extends Activity {
         if (toggle == 1) applySortFromWheel();
         else if (toggle == 2) imageSizeMode = (imageSizeMode + 1) % 3;
         if (toggle != 0) {
-            showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, new int[]{1,2,0,0});
+            showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
         } else {
             closeWheel();
             if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
