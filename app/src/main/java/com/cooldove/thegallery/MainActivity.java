@@ -770,6 +770,8 @@ public final class MainActivity extends Activity {
     }
     private void showHeldButtonWheel() {
         longPressTriggered = true;
+        if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable);
+        longPressRunnable = null;
         if (heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing) {
             showWheel(new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0});
         } else if (heldButton == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
