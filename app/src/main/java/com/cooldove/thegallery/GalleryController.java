@@ -1,14 +1,22 @@
 package com.cooldove.thegallery;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.view.KeyEvent;
 
 /** Grid screen input: navigation, chord fast-scroll, face-button holds, and the hold wheel. */
 final class GalleryController implements ScreenController {
+    /** Fast-scroll works as soon as a direction is held; the hint appears after this delay to avoid flicker. */
+    private static final long CHORD_HINT_DELAY_MS = 300;
+
     private final MainActivity activity;
     private final InteractionSystem interaction;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     private boolean fastTop;
     private boolean fastBottom;
+    private boolean chordHintVisible;
+    private Runnable chordHintReveal;
     private int[] wheelActions;
     private int[] wheelToggles;
     private boolean wheelUsesFaceButton;
@@ -19,8 +27,10 @@ final class GalleryController implements ScreenController {
     }
 
     @Override public void onEnter() {
+        cancelChordHintReveal();
         fastTop = false;
         fastBottom = false;
+        chordHintVisible = false;
         wheelActions = null;
         wheelToggles = null;
         wheelUsesFaceButton = false;
@@ -40,11 +50,11 @@ final class GalleryController implements ScreenController {
     private HintPanel buildPanel() {
         int held = interaction.heldKey();
         HintPanel panel = HintPanel.face();
-        if (fastTop) {
+        if (chordHintVisible && fastTop) {
             panel.x("To Top", 0, () -> activity.scrollGridToEdge(true, false));
             return panel;
         }
-        if (fastBottom) {
+        if (chordHintVisible && fastBottom) {
             panel.b("To Bottom", 0, () -> activity.scrollGridToEdge(false, false));
             return panel;
         }
@@ -70,14 +80,7 @@ final class GalleryController implements ScreenController {
         boolean down = action == KeyEvent.ACTION_DOWN;
         boolean gridReady = activity.grid != null && !activity.photos.isEmpty();
 
-        if (activity.grid != null && isDpadKey(key)) {
-            boolean top = interaction.isPressed(KeyEvent.KEYCODE_DPAD_UP) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_LEFT);
-            boolean bottom = interaction.isPressed(KeyEvent.KEYCODE_DPAD_DOWN) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_RIGHT);
-            boolean changed = top != fastTop || bottom != fastBottom;
-            fastTop = top;
-            fastBottom = bottom;
-            if (changed) refreshHints();
-        }
+        if (activity.grid != null && isDpadKey(key)) updateChordState();
 
         if (gridReady && ((fastTop && key == KeyEvent.KEYCODE_BUTTON_X) || (fastBottom && key == KeyEvent.KEYCODE_BUTTON_B))) {
             if (down && event.getRepeatCount() == 0) activity.scrollGridToEdge(fastTop, false);
@@ -107,6 +110,10 @@ final class GalleryController implements ScreenController {
         }
 
         if (down && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) {
+            cancelChordHintReveal();
+            fastTop = false;
+            fastBottom = false;
+            chordHintVisible = false;
             activity.resetButtonHoldForUiChange();
             activity.showSettings();
             return true;
@@ -143,6 +150,48 @@ final class GalleryController implements ScreenController {
             return true;
         }
         return false;
+    }
+
+    private void updateChordState() {
+        boolean top = interaction.isPressed(KeyEvent.KEYCODE_DPAD_UP) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_LEFT);
+        boolean bottom = interaction.isPressed(KeyEvent.KEYCODE_DPAD_DOWN) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_RIGHT);
+        boolean directionHeld = top || bottom;
+
+        if (!directionHeld) {
+            cancelChordHintReveal();
+            boolean wasVisible = chordHintVisible;
+            fastTop = false;
+            fastBottom = false;
+            chordHintVisible = false;
+            if (wasVisible) refreshHints();
+            return;
+        }
+
+        boolean changed = top != fastTop || bottom != fastBottom;
+        fastTop = top;
+        fastBottom = bottom;
+        if (chordHintVisible) {
+            if (changed) refreshHints();
+            return;
+        }
+        if (chordHintReveal == null) {
+            chordHintReveal = () -> {
+                chordHintReveal = null;
+                if (activity.current != Screen.GALLERY) return;
+                if (!interaction.isPressed(KeyEvent.KEYCODE_DPAD_UP) && !interaction.isPressed(KeyEvent.KEYCODE_DPAD_LEFT)
+                        && !interaction.isPressed(KeyEvent.KEYCODE_DPAD_DOWN) && !interaction.isPressed(KeyEvent.KEYCODE_DPAD_RIGHT)) return;
+                chordHintVisible = true;
+                refreshHints();
+            };
+            handler.postDelayed(chordHintReveal, CHORD_HINT_DELAY_MS);
+        }
+    }
+
+    private void cancelChordHintReveal() {
+        if (chordHintReveal != null) {
+            handler.removeCallbacks(chordHintReveal);
+            chordHintReveal = null;
+        }
     }
 
     private void openWheel(int heldKey) {
