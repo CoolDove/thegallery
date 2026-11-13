@@ -1,4 +1,4 @@
-package com.cooldove.thegallery;
+package com.dove.thegallery;
 
 /** Declarative description of the hints currently shown by {@link InteractionSystem}. */
 final class HintPanel {

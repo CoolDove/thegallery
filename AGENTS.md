@@ -1,48 +1,42 @@
 # The Gallery
 
-## Project direction
+## Product and interaction direction
 
-The Gallery is an offline image viewer for Android handheld gaming devices, primarily used to browse game screenshots. The first release targets landscape handheld consoles; controller usability is the primary interaction design focus, with touchscreen support as well.
+The Gallery is a local image gallery for Android handheld gaming devices. The primary target is landscape handhelds and controller-first operation; touchscreen input is also supported. Keep controller focus visible, directional movement predictable, and prompts expressed with the matching controller icons.
 
-## First-release product scope
+## Application structure
 
-- Browse images in a user-selected directory using Android's system folder picker (SAF). Persist access permission so the selected default folder remains available across launches.
-- Users can switch the current folder. Switching folders affects the current session only unless the user explicitly sets that folder as the default.
-- On first launch, prompt the user to choose a folder. If they cancel, show an empty state with an action to choose one.
-- Launch directly into the default folder when one has been set. If it is missing or inaccessible, explain the problem and prompt the user to choose another folder.
-- Show image files directly inside the selected folder only. Do not recurse into subfolders and do not include videos.
-- Support common image formats that Android can decode.
-- Provide grid and full-screen viewing modes. In grid mode, D-pad navigation selects an image and A opens it full-screen. In full-screen mode, left/right on the D-pad changes images and B returns to the grid.
-- Remember the selected image when returning to the grid. When opening a folder, initially select the newest image.
-- Full-screen images initially use fit-to-screen display; zoom controls are out of first-release scope.
-- Support touchscreen interaction, while prioritizing controller operation in the design.
-- X cycles through multiple sorting options: modified time newest-first (default), modified time oldest-first, name A–Z, and name Z–A.
-- Holding B in either mode displays a progress indicator and exits the app after 1.5 seconds. No confirmation dialog is needed.
-- The app has no network-related functionality; image and folder browsing are local.
+- Native Android application written in Java with Android Views. `MainActivity` owns app state, persistence, media discovery/loading, screen construction, and lifecycle; keep input policy in the screen controllers and shared hold/prompt/wheel behavior in `InteractionSystem`.
+- `Screen` identifies the active screen. `ScreenController` defines screen entry, hint refresh, and key dispatch. `GalleryController`, `ViewerController`, `SettingsController`, and `ShareController` handle their respective screens.
+- `HintPanel` describes button and D-pad prompts declaratively; `InteractionSystem` renders those prompts and manages shared key/hold state. Before screen transitions or modal overlays, use the shared `resetButtonHoldForUiChange()` path so a held action cannot leak into the next UI.
+- Keep changes focused and avoid duplicating controller/input state across screens. Prefer the existing Java/Views architecture and established patterns.
 
-## Development constraints
+## Current product behavior
 
-- Respect Android scoped storage and SAF persisted URI permissions; do not request broad storage access for folder browsing.
-- Keep browsing responsive when loading image thumbnails and full-screen images.
-- Prefer small, focused changes and avoid unnecessary tests; compile/build validation is preferred when available.
-- Project license: AGPL-3.0. Check license obligations before adding dependencies or distribution/network features.
+- Choose folders with Android's system document-tree picker (SAF). Persist URI access and the configured source list in app preferences. Settings can add/remove image sources; the gallery scans the direct children of each source, not nested directories, and filters to image MIME types.
+- The gallery uses a virtualized `GridView`. Thumbnail decoding runs asynchronously with limited concurrent work and a bounded in-memory LRU cache; full-screen images are decoded asynchronously. Preserve responsiveness for large folders.
+- D-pad moves the visible selection; A opens the selected image. In the viewer, left/right changes images and B returns to the gallery. X cycles sorting: newest, oldest, name A–Z, name Z–A. The held A/X controller wheels provide image actions and sorting/display options; preserve in-place wheel updates and release-to-dismiss behavior.
+- The current UI also provides settings and a local-LAN image sharing screen. Sharing serves the selected image over a local HTTP socket and shows a QR code. This is an explicit product capability, not cloud or remote-service integration.
+- Folder/source, sort, and display-mode state are persisted as implemented. When changing folder selection semantics or defaults, update the implementation and this document together; do not assume the first-release decisions below are already implemented.
 
-## Technical decisions pending
+## Android and storage constraints
 
-- Android SDK: min SDK 28 (Android 9), target SDK 35 (Android 15). Target hardware includes Android 11 / API 30; verify on API 30 devices. Distribution is outside Google Play, but target 35 is selected conservatively.
-- Native Android project using Java and Android Views to give direct control over controller focus and standard key events. Default Android controller key mappings are used; do not add remapping settings unless required later.
-- Controller-first input behavior is a top-level requirement. Keep focus visible and directional movement predictable; validate D-pad, A/B/X, and long-press behavior on target hardware.
-- For controller prompts, use the corresponding button icon rather than text labels such as `[B]`.
-- Keep the face-button prompt cluster in the physical controller layout: X above, Y left, A right, B below, with fixed aligned centers; show Y's icon even when its caption is empty. Place the secondary D-pad wheel at the lower left.
-- Wheel menus are hold-operated: the initiating face button opens the wheel and its release closes it. Toggle selections (such as sorting or display mode) update the underlying state and refresh the wheel label/grid in place; never close/recreate/reopen the wheel or its scrim to apply a toggle. This avoids accumulating dark overlays and preserves one-release dismissal behavior. Keep existing short-press actions separate from hold actions.
-- Before any screen transition or modal overlay is shown, call the shared `resetButtonHoldForUiChange()` interface to cancel an in-progress long-press and swallow its eventual key-up. This prevents the held action from leaking into the newly shown UI; use it for dialogs/overlays as well as screen changes.
-- Thumbnail presentation and performance limits. Expect folders containing thousands of images; first phase should use a virtualized grid, asynchronous thumbnail loading, and a bounded in-memory thumbnail cache rather than loading full-resolution images into the grid.
-- Exact touch gestures and remaining controller mappings.
+- Application ID, Android namespace, and Java package: `com.dove.thegallery`. Min SDK 28, compile/target SDK 35, Java 17, landscape orientation. Verify behavior on Android API 30 hardware when possible.
+- Use SAF and persisted URI grants for user-selected media. Do not add broad storage permissions.
+- Keep image enumeration and decoding off the UI thread. Keep thumbnail work bounded and avoid retaining full-resolution images in the grid.
+- The manifest currently declares `INTERNET` for the local sharing server. Do not describe the app as having no network-related functionality; do not add network access/features beyond the intentional local sharing flow without updating the product/security design.
+- Project license is AGPL-3.0. Check license obligations before adding dependencies or distribution/network features.
+- Prefer build/compile validation; avoid unnecessary tests. Build APKs for feature/bug delivery tasks as required by the project workflow.
 
-## Android project baseline
+## Controller and UI invariants
 
-- Application ID: `com.cooldove.thegallery`.
-- Compile SDK: 35; target SDK: 35; min SDK: 28.
-- Landscape orientation.
-- Java + Android Views; no network permission or network-related dependencies.
-- Use a virtualized grid and asynchronous thumbnail loading with bounded caching for large folders.
+- Face-button prompt cluster follows the physical layout: X above, Y left, A right, B below, fixed aligned centers. Keep Y's icon visible even with an empty caption; place the secondary D-pad wheel at lower left.
+- Hold-operated wheels open on the initiating face-button hold and close on its release. Toggle actions update underlying state and refresh the wheel label/grid in place—do not recreate the wheel or scrim. Keep short-press actions separate from hold actions.
+- Before changing screens or showing modal overlays, cancel in-progress holds and swallow their eventual key-up through `resetButtonHoldForUiChange()` / the shared interaction system.
+- Keep selected-item feedback clearly visible for controller users and preserve selection when returning between gallery and viewer.
+
+## Known gaps / decisions to revisit
+
+- The code currently launches with the saved set of sources and supports add/remove in Settings; it does not currently provide a distinct “current folder vs explicit default folder” workflow. Decide that behavior before changing persistence semantics.
+- B-hold exit timing and other precise long-press thresholds are implementation details; check the controller code before documenting or changing exact durations.
+- Touch gestures, remaining controller mappings, and target-device validation are not fully specified. Do not add remapping settings without a product requirement.

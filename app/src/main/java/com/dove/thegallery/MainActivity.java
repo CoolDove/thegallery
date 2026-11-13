@@ -1,4 +1,4 @@
-package com.cooldove.thegallery;
+package com.dove.thegallery;
 
 import android.app.Activity;
 import android.content.Intent;
@@ -721,7 +721,7 @@ public final class MainActivity extends Activity {
         // notifyDataSetChanged/setNumColumns can rebind or relayout children after this
         // method returns. Apply the custom selection border once those children exist.
         grid.post(() -> {
-            if (grid == null || viewing) return;
+            if (grid == null || current != Screen.GALLERY) return;
             grid.setSelection(selected);
             updateGridHighlight();
         });

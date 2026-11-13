@@ -1,4 +1,4 @@
-package com.cooldove.thegallery;
+package com.dove.thegallery;
 
 import android.os.Handler;
 import android.os.Looper;

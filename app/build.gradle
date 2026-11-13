@@ -7,11 +7,11 @@ dependencies {
 }
 
 android {
-    namespace 'com.cooldove.thegallery'
+    namespace 'com.dove.thegallery'
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.cooldove.thegallery'
+        applicationId 'com.dove.thegallery'
         minSdk 28
         targetSdk 35
         versionCode 1
