@@ -143,6 +143,28 @@ public final class MainActivity extends Activity {
 
     private enum Screen { GALLERY, SETTINGS, VIEWER }
 
+    private interface ScreenInputHandler { boolean handle(KeyEvent event); }
+
+    private final ScreenInputHandler settingsInput = event -> {
+        int key = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_UP && swallowedKeyUps.remove(key)) return true;
+        if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) {
+            closeSettings();
+            return true;
+        }
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
+        if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            if (!settingsActions.isEmpty()) { settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); }
+        } else if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_LEFT) {
+            if (!settingsActions.isEmpty()) { settingsFocus = Math.floorMod(settingsFocus - 1, settingsActions.size()); focusSettingsAction(); }
+        } else if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+            if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick();
+        } else if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) closeSettings();
+        return true;
+    };
+    private final ScreenInputHandler galleryInput = this::handleGalleryInput;
+    private final ScreenInputHandler viewerInput = this::handleViewerInput;
+
     /** Owns shared prompt rendering; each screen decides when its prompt state changes. */
     private final class ButtonHints {
         void showGallery(boolean holding) { activeScreen = Screen.GALLERY; render(holding); }
@@ -661,36 +683,27 @@ public final class MainActivity extends Activity {
             if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) { closeShareScreen(); return true; }
             return true;
         }
+        if (settings) return settingsInput.handle(event);
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             if (event.getRepeatCount() == 0) pressedKeys.add(key);
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
         }
         if (event.getAction() == KeyEvent.ACTION_UP && swallowedKeyUps.remove(key)) return true;
-        // Settings owns its complete input path. Do this before gallery chord,
-        // wheel, and hold processing so stale gallery state cannot handle input.
-        if (settings) {
-            if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) {
-                closeSettings();
-                return true;
-            }
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                    if (!settingsActions.isEmpty()) { settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); }
-                    return true;
-                }
-                if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    if (!settingsActions.isEmpty()) { settingsFocus = Math.floorMod(settingsFocus - 1, settingsActions.size()); focusSettingsAction(); }
-                    return true;
-                }
-                if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                    if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick();
-                    return true;
-                }
-                if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
-            }
-            return true;
-        }
+        return (viewing ? viewerInput : galleryInput).handle(event);
+    }
+
+    private boolean handleGalleryInput(KeyEvent event) {
+        return handleScreenInput(event, false);
+    }
+
+    private boolean handleViewerInput(KeyEvent event) {
+        return handleScreenInput(event, true);
+    }
+
+    /** Gallery and viewer have separate entry handlers; common controller mechanics stay below. */
+    private boolean handleScreenInput(KeyEvent event, boolean viewer) {
+        int key = event.getKeyCode();
         if (activeScreen == Screen.GALLERY && !viewing && !settings && grid != null && isDpadKey(key)) {
             boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
             boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
