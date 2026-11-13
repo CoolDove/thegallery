@@ -73,9 +73,16 @@ public final class MainActivity extends Activity {
     private boolean settings;
     private boolean sourcesDirty;
     private boolean scanInProgress;
+    private TextView refreshIndicator;
+    private long refreshGeneration;
+    private final Runnable observerRefresh = () -> requestRefresh(false);
     private final ArrayList<Uri> observedDirectories = new ArrayList<>();
     private final ContentObserver directoryObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
-        @Override public void onChange(boolean selfChange, Uri uri) { requestRefresh(false); }
+        @Override public void onChange(boolean selfChange, Uri uri) {
+            sourcesDirty = true;
+            handler.removeCallbacks(observerRefresh);
+            handler.postDelayed(observerRefresh, 350);
+        }
     };
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
@@ -171,13 +178,14 @@ public final class MainActivity extends Activity {
     private void scan() {
         if (scanInProgress) { sourcesDirty = true; return; }
         scanInProgress = true;
+        long generation = ++refreshGeneration;
         String selectedUri = selected >= 0 && selected < photos.size() ? photos.get(selected).uri.toString() : null;
-        root.removeAllViews(); photos.clear(); selected = 0;
-        empty("Loading images…", false);
+        updateRefreshIndicator(true);
+        ArrayList<Uri> scanSources = new ArrayList<>(sources);
         loader.execute(() -> {
             ArrayList<Photo> found = new ArrayList<>();
             try {
-                for (Uri source : new ArrayList<>(sources)) {
+                for (Uri source : scanSources) {
                     String id = DocumentsContract.getTreeDocumentId(source);
                     Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
                     try (android.database.Cursor c = getContentResolver().query(children, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
@@ -188,16 +196,30 @@ public final class MainActivity extends Activity {
                     }
                 }
             } catch (Exception e) {
-                runOnUiThread(() -> { scanInProgress = false; empty("Folder unavailable. Choose another folder.", true); }); return;
+                runOnUiThread(() -> {
+                    if (generation != refreshGeneration) return;
+                    scanInProgress = false; updateRefreshIndicator(false);
+                    if (photos.isEmpty()) empty("Folder unavailable. Choose another folder.", true);
+                    if (sourcesDirty) { sourcesDirty = false; scan(); }
+                }); return;
             }
             runOnUiThread(() -> {
-                photos.addAll(found);
+                if (generation != refreshGeneration) return;
+                photos.clear(); photos.addAll(found);
                 sortPhotos();
+                selected = 0;
                 if (selectedUri != null) for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
                 scanInProgress = false;
+                sourcesDirty = false;
                 observeDirectories();
-                if (settings) showSettings(); else showGrid();
-                if (sourcesDirty) { sourcesDirty = false; scan(); }
+                if (!settings && !viewing && grid != null) {
+                    ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+                    if (photos.isEmpty()) { grid = null; showGrid(); }
+                    else { selected = Math.min(selected, photos.size() - 1); grid.setSelection(selected); updateGridHighlight(); }
+                    refreshSummary();
+                } else if (!settings && !viewing && grid == null) showGrid();
+                updateRefreshIndicator(false);
+                if (sourcesDirty && !settings) { sourcesDirty = false; scan(); }
             });
         });
     }
@@ -206,6 +228,7 @@ public final class MainActivity extends Activity {
         if (settings || viewing) { sourcesDirty = true; return; }
         if (root == null) return;
         if (onlyIfDirty && !sourcesDirty) return;
+        if (scanInProgress) { sourcesDirty = true; return; }
         sourcesDirty = false;
         scan();
     }
@@ -217,6 +240,8 @@ public final class MainActivity extends Activity {
             String id = DocumentsContract.getTreeDocumentId(source);
             Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
             try {
+                getContentResolver().registerContentObserver(source, true, directoryObserver);
+                observedDirectories.add(source);
                 getContentResolver().registerContentObserver(children, true, directoryObserver);
                 observedDirectories.add(children);
             } catch (SecurityException ignored) { }
@@ -225,12 +250,14 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        observeDirectories();
         if (root != null) requestRefresh(true);
     }
 
     @Override protected void onPause() {
         super.onPause();
         sourcesDirty = true;
+        handler.removeCallbacks(observerRefresh);
     }
 
     private void sortPhotos() {
@@ -279,7 +306,7 @@ public final class MainActivity extends Activity {
                 sources.remove(source); sourcesDirty = true;
                 persistSources();
                 if (sources.isEmpty()) { photos.clear(); showGrid(); }
-                else { folder = sources.get(0); scan(); }
+                else folder = sources.get(0);
                 showSettings();
             });
             row.addView(remove);
@@ -337,6 +364,9 @@ public final class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
         status = null;
+        refreshIndicator = label("Refreshing…", 13);
+        refreshIndicator.setVisibility(View.GONE);
+        bar.addView(refreshIndicator);
         summary = label("", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
         refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
@@ -357,6 +387,10 @@ public final class MainActivity extends Activity {
     private void refreshSummary() {
         if (summary == null) return;
         summary.setText(SORTS[sort] + " | " + photos.size() + " images");
+    }
+
+    private void updateRefreshIndicator(boolean refreshing) {
+        if (refreshIndicator != null) refreshIndicator.setVisibility(refreshing ? View.VISIBLE : View.GONE);
     }
 
     private void updateGridHighlight() {
