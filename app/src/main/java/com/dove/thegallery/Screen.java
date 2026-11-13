@@ -1,3 +1,3 @@
-package com.cooldove.thegallery;
+package com.dove.thegallery;
 
 enum Screen { GALLERY, VIEWER, SETTINGS, SHARE }
