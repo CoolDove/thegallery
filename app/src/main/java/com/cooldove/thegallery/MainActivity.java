@@ -898,7 +898,7 @@ public final class MainActivity extends Activity {
         TextView filename = label(photo.name, 18); filename.setSingleLine(true); content.addView(filename);
         try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240); Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565); for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); qrView.setScaleType(ImageView.ScaleType.FIT_CENTER); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(190), dp(190)); qrParams.topMargin = dp(6); qrParams.bottomMargin = dp(6); content.addView(qrView, qrParams); } catch (Exception ignored) { }
         TextView path = label(url, 16); path.setTextIsSelectable(true); path.setSingleLine(true); path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); path.setPadding(dp(12), dp(6), dp(12), dp(6)); content.addView(path);
-        TextView hint = label("Open on a computer on the same Wi-Fi network", 15); content.addView(hint);
+        TextView hint = label("Open on a device on the same Wi-Fi network", 15); content.addView(hint);
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
         FrameLayout back = new FrameLayout(this); addClusterButton(back, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0); back.setOnClickListener(v -> closeShareScreen()); root.addView(back, clusterParams(Gravity.RIGHT));
     }
