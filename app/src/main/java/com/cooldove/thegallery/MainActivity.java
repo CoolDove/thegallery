@@ -872,6 +872,14 @@ public final class MainActivity extends Activity {
     private void renderButtonHints(boolean holding) {
         if (root == null) return;
         FrameLayout cluster = new FrameLayout(this);
+        if (activeScreen == Screen.SETTINGS) {
+            int diameter = dp(CLUSTER_BUTTON_DP);
+            int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
+            addClusterButton(cluster, "switch_b_96dpi", "Back", centerX, centerY + dp(CLUSTER_INTERVAL_DP), diameter, Gravity.RIGHT, 0);
+            root.addView(cluster, clusterParams(Gravity.RIGHT));
+            promptOverlay = cluster;
+            return;
+        }
         // cluster.setBackgroundColor(0x99000000);
         boolean fastTop = holding && fastScrollTopChord;
         boolean fastBottom = holding && fastScrollBottomChord;
