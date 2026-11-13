@@ -361,12 +361,11 @@ public final class MainActivity extends Activity {
             if (cell.getChildCount() == 0) {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, -1);
-                imageParams.setMargins(dp(8), dp(8), dp(8), dp(8));
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(displayMode == 2 ? 210 : 143), Gravity.TOP);
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
                 name.setGravity(Gravity.TOP | Gravity.LEFT);
-                name.setPadding(dp(10), dp(2), dp(10), dp(2));
+                name.setPadding(dp(10), dp(0), dp(10), dp(2));
                 name.setMaxLines(2);
                 name.setEllipsize(android.text.TextUtils.TruncateAt.END);
                 FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(42), Gravity.BOTTOM);
@@ -384,11 +383,14 @@ public final class MainActivity extends Activity {
             cellBackground.setColor(0xff35383d);
             cellBackground.setCornerRadius(dp(6));
             cell.setBackground(cellBackground);
-            int rowHeight = displayMode == 2 ? 270 : 208;
+            if (android.os.Build.VERSION.SDK_INT >= 21) cell.setClipToOutline(true);
+            int rowHeight = displayMode == 2 ? 270 : displayMode == 0 ? 149 : 187;
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(rowHeight)));
             FrameLayout.LayoutParams imageParams = (FrameLayout.LayoutParams) image.getLayoutParams();
-            imageParams.bottomMargin = dp(displayMode == 0 ? 8 : displayMode == 2 ? 66 : 50);
+            imageParams.setMargins(dp(6), dp(6), dp(6), dp(displayMode == 0 ? 6 : displayMode == 2 ? 66 : 50));
+            imageParams.height = dp(displayMode == 2 ? 210 : 143);
             image.setLayoutParams(imageParams);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
@@ -575,7 +577,7 @@ public final class MainActivity extends Activity {
                         } else grid.smoothScrollToPosition(target);
                         grid.post(this::updateGridHighlight);
                     });
-                }
+                } else grid.smoothScrollToPosition(target);
             } else {
                 grid.setSelection(target);
                 grid.smoothScrollToPosition(target);
