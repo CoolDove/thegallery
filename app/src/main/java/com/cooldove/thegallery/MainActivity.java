@@ -90,6 +90,8 @@ public final class MainActivity extends Activity {
     private int sortDirection;
     private int imageSizeMode;
     private int[] activeWheelActions;
+    private int[] wheelToggleActions;
+    private boolean wheelUsesFaceButton;
 
     private static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -440,8 +442,6 @@ public final class MainActivity extends Activity {
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
         if (radialOverlay != null) {
-            if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B || event.getKeyCode() == KeyEvent.KEYCODE_BACK) return handleWheelKey(event);
-            if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A || event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_X) return true;
             return handleWheelKey(event);
         }
         if (settings) {
@@ -460,6 +460,13 @@ public final class MainActivity extends Activity {
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == KeyEvent.KEYCODE_BUTTON_B && radialOverlay == null) {
+                boolean wasLongPress = longPressTriggered;
+                cancelButtonHold();
+                if (!wasLongPress && viewing) showGrid();
+                else if (!wasLongPress && folder == null) pickFolder();
+                return true;
+            }
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
             if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -468,16 +475,18 @@ public final class MainActivity extends Activity {
             }
             return true;
         }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && key == KeyEvent.KEYCODE_BUTTON_X && viewing) { startButtonHold(key); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && photos.isEmpty() && (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER)) { pickFolder(); return true; }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && ((key == KeyEvent.KEYCODE_BUTTON_A && !viewing) || (key == KeyEvent.KEYCODE_BUTTON_X && !viewing)) && event.getRepeatCount() == 0) { startButtonHold(key); return true; }
-        if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) && heldButton == key) {
-            boolean held = longPressTriggered;
-            cancelButtonHold();
-            if (!held && !viewing && key == KeyEvent.KEYCODE_BUTTON_A) { if (grid == null || photos.isEmpty()) pickFolder(); else { int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); } }
-            if (!held && !viewing && key == KeyEvent.KEYCODE_BUTTON_X) { sort = (sort + 1) % SORTS.length; sortPhotos(); selected = Math.min(selected, Math.max(0, photos.size() - 1)); showGrid(); }
-            if (!held && viewing && key == KeyEvent.KEYCODE_BUTTON_B) showGrid();
+        if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_BUTTON_Y) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0) startButtonHold(key);
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key) {
+                boolean wasLongPress = longPressTriggered;
+                cancelButtonHold();
+                if (!wasLongPress) performFaceButtonShortPress(key);
+                return true;
+            }
             return true;
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
@@ -499,6 +508,33 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
+    private void performFaceButtonShortPress(int key) {
+        if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) {
+            if (photos.isEmpty()) { pickFolder(); return; }
+            int focused = grid == null ? -1 : grid.getSelectedItemPosition();
+            if (focused >= 0) selected = focused;
+            openPhoto();
+        } else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
+            sort = (sort + 1) % SORTS.length;
+            sortPhotos();
+            selected = Math.min(selected, Math.max(0, photos.size() - 1));
+            showGrid();
+        }
+    }
+
+    private void applySortFromWheel() {
+        String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
+        sort = (sort + 1) % SORTS.length;
+        sortPhotos();
+        if (selectedName != null) {
+            for (int i = 0; i < photos.size(); i++) if (selectedName.equals(photos.get(i).name)) { selected = i; break; }
+        }
+        if (grid != null) {
+            ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+            grid.setSelection(selected);
+        }
+    }
+
     private void startButtonHold(int key) {
         if (heldButton != KeyEvent.KEYCODE_UNKNOWN) return;
         heldButton = key; heldButtonAt = android.os.SystemClock.uptimeMillis(); longPressTriggered = false;
@@ -507,7 +543,7 @@ public final class MainActivity extends Activity {
             exitRunnable = new Runnable() { @Override public void run() { int p = (int)(android.os.SystemClock.uptimeMillis() - heldButtonAt); if (exitProgress != null) exitProgress.setProgress(Math.min(p, EXIT_HOLD_DURATION_MS)); if (p >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
             exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(EXIT_HOLD_DURATION_MS); root.addView(exitProgress, new FrameLayout.LayoutParams(-1, dp(7), Gravity.BOTTOM)); handler.post(exitRunnable);
         } else {
-            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{3, 4, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) { longPressTriggered = true; showDeleteConfirmation(); } };
+            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if ((key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_BUTTON_Y) && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
             handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
             handler.postDelayed(() -> { if (heldButton == key && !longPressTriggered) addButtonPrompts(true); }, HOLD_HINT_DELAY_MS);
         }
@@ -519,7 +555,12 @@ public final class MainActivity extends Activity {
     private void removePromptOverlay() { if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
 
     private void showWheel(String title, String[] labels, int[] actions) {
+        showWheel(title, labels, actions, new int[4]);
+    }
+    private void showWheel(String title, String[] labels, int[] actions, int[] toggles) {
         activeWheelActions = actions;
+        wheelToggleActions = toggles;
+        wheelUsesFaceButton = heldButton == KeyEvent.KEYCODE_BUTTON_A || heldButton == KeyEvent.KEYCODE_BUTTON_X || heldButton == KeyEvent.KEYCODE_BUTTON_Y;
         if (radialOverlay == null) {
             FrameLayout overlay = new FrameLayout(this);
             overlay.setBackgroundColor(0x99000000);
@@ -546,21 +587,25 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < 4; i++) ((TextView) panel.getChildAt(i + 1)).setText(new String[]{"↑  ", "↓  ", "←  ", "→  "}[i] + labels[i]);
     }
     private boolean handleWheelKey(KeyEvent e) {
-        if (e.getAction() == KeyEvent.ACTION_UP && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
+        if (e.getAction() == KeyEvent.ACTION_UP && wheelUsesFaceButton && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
         if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
-        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
+        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
         if (direction == heldButton || e.getRepeatCount() > 0) return true;
         int index = direction == KeyEvent.KEYCODE_DPAD_UP ? 0 : direction == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : direction == KeyEvent.KEYCODE_DPAD_LEFT ? 2 : direction == KeyEvent.KEYCODE_DPAD_RIGHT ? 3 : -1;
         if (index < 0) return true;
         int action = activeWheelActions == null ? 0 : activeWheelActions[index];
-        if (heldButton == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
-            if (action == 3) { sort = (sort + 1) % SORTS.length; sortPhotos(); }
-            if (action == 4) imageSizeMode = (imageSizeMode + 1) % 3;
-            showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{3,4,0,0});
-        } else { closeWheel(); if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later"); }
+        int toggle = wheelToggleActions == null ? 0 : wheelToggleActions[index];
+        if (toggle == 1) applySortFromWheel();
+        else if (toggle == 2) imageSizeMode = (imageSizeMode + 1) % 3;
+        if (toggle != 0) {
+            showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, new int[]{1,2,0,0});
+        } else {
+            closeWheel();
+            if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
+        }
         return true;
     }
-    private void closeWheel() { if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay); radialOverlay = null; activeWheelActions = null; }
+    private void closeWheel() { if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay); radialOverlay = null; activeWheelActions = null; wheelToggleActions = null; wheelUsesFaceButton = false; }
     private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
     private void showDeleteConfirmation() { if (photos.isEmpty()) return; android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this).setMessage("Delete this image?").setPositiveButton("A · YES", (d,w) -> deleteCurrentPhoto()).setNegativeButton("B · NO", (d,w) -> {}).create(); dialog.setOnShowListener(d -> { dialog.getButton(-1).setText("A · YES"); dialog.getButton(-2).setText("B · NO"); }); dialog.show(); }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
