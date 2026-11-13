@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
     private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
     private static final String[] SORTS = {"Newest", "Oldest", "Name A-Z", "Name Z-A"};
+    private static final String[] DISPLAY_MODES = {"Simple", "Normal", "Detailed"};
     /** Shared geometry so the XYAB prompt panel and the D-pad wheel line up exactly. */
     private static final int CLUSTER_BUTTON_DP = 26;
     private static final int CLUSTER_INTERVAL_DP = 30;
@@ -101,7 +102,7 @@ public final class MainActivity extends Activity {
     private Runnable longPressRunnable;
     private Runnable holdHintRunnable;
     private int sortDirection;
-    private int imageSizeMode;
+    private int displayMode = 1;
     private int[] activeWheelActions;
     private int[] wheelToggleActions;
     private boolean wheelUsesFaceButton;
@@ -290,7 +291,7 @@ public final class MainActivity extends Activity {
         summary = label("", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
         refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
-        grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
+        grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(displayMode == 2 ? 300 : 210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
         grid.setOnItemClickListener((parent, view, position, id) -> { selected = position; openPhoto(); });
         grid.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { selected = position; updateGridHighlight(); }
@@ -357,7 +358,7 @@ public final class MainActivity extends Activity {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setPadding(dp(8), dp(8), dp(8), dp(8));
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(150), Gravity.TOP);
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(displayMode == 2 ? 500 : 150), Gravity.TOP);
                 imageParams.setMargins(dp(4), dp(4), dp(4), 0);
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
@@ -367,13 +368,21 @@ public final class MainActivity extends Activity {
                 name.setEllipsize(android.text.TextUtils.TruncateAt.END);
                 FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(42), Gravity.BOTTOM);
                 cell.addView(name, lp);
+                TextView metadata = label("", 12);
+                metadata.setGravity(Gravity.BOTTOM | Gravity.LEFT);
+                metadata.setPadding(dp(10), dp(2), dp(10), dp(4));
+                metadata.setBackgroundColor(0xb8111315);
+                cell.addView(metadata, new FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM));
             }
-            image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); Photo photo = photos.get(position); name.setText(photo.name);
+            image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); TextView metadata = (TextView) cell.getChildAt(2); Photo photo = photos.get(position); name.setText(photo.name);
+            name.setVisibility(displayMode == 0 ? View.GONE : View.VISIBLE);
+            metadata.setVisibility(displayMode == 2 ? View.VISIBLE : View.GONE);
+            if (displayMode == 2) metadata.setText(imageMetadata(photo));
             GradientDrawable cellBackground = new GradientDrawable();
             cellBackground.setColor(0xff35383d);
             cellBackground.setCornerRadius(dp(6));
             cell.setBackground(cellBackground);
-            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(208)));
+            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(displayMode == 2 ? 560 : displayMode == 0 ? 166 : 208)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
@@ -388,7 +397,7 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (result == null || grid == null) return;
                     int first = grid.getFirstVisiblePosition(); View child = grid.getChildAt(position - first);
-                    if (child instanceof FrameLayout && photo.uri.toString().equals(child.getTag())) ((ImageView)((FrameLayout)child).getChildAt(0)).setImageBitmap(result);
+                    if (child instanceof FrameLayout && photo.uri.toString().equals(child.getTag())) { FrameLayout targetCell = (FrameLayout) child; ((ImageView)targetCell.getChildAt(0)).setImageBitmap(result); if (displayMode == 2) ((TextView)targetCell.getChildAt(2)).setText(imageMetadata(photo)); }
                 });
             });
         }
@@ -402,6 +411,14 @@ public final class MainActivity extends Activity {
             int sample = 1; while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
             try (InputStream image = getContentResolver().openInputStream(photo.uri)) { BitmapFactory.Options opts = new BitmapFactory.Options(); opts.inSampleSize = sample; return BitmapFactory.decodeStream(image, null, opts); }
         } catch (Exception ignored) { return null; }
+    }
+
+    private String imageMetadata(Photo photo) {
+        Bitmap bitmap = cache.get(photo.uri.toString());
+        String dimensions = bitmap == null ? "Dimensions unavailable" : bitmap.getWidth() + " × " + bitmap.getHeight();
+        String format = photo.name.contains(".") ? photo.name.substring(photo.name.lastIndexOf('.') + 1).toUpperCase(java.util.Locale.ROOT) : "IMAGE";
+        String date = photo.modified > 0 ? android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", photo.modified).toString() : "Time unavailable";
+        return dimensions + "  •  " + date + "  •  " + format;
     }
 
     private void openPhoto() {
@@ -600,7 +617,7 @@ public final class MainActivity extends Activity {
     }
 
     private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; if (holdHintRunnable != null) handler.removeCallbacks(holdHintRunnable); holdHintRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
-    private String imageSizeLabel() { return new String[]{"Small", "Big", "List"}[imageSizeMode]; }
+    private String imageSizeLabel() { return DISPLAY_MODES[displayMode]; }
     private void addButtonPrompts(boolean holding) {
         removePromptOverlay();
         if (root == null || viewing && !holding) return;
@@ -750,9 +767,10 @@ public final class MainActivity extends Activity {
         int action = activeWheelActions == null ? 0 : activeWheelActions[index];
         int toggle = wheelToggleActions == null ? 0 : wheelToggleActions[index];
         if (toggle == 1) applySortFromWheel();
-        else if (toggle == 2) imageSizeMode = (imageSizeMode + 1) % 3;
+        else if (toggle == 2) displayMode = (displayMode + 1) % DISPLAY_MODES.length;
         if (toggle != 0) {
-            showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
+            if (toggle == 2 && grid != null) showGrid();
+            else showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
         } else {
             closeWheel();
             if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
