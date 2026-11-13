@@ -551,7 +551,38 @@ public final class MainActivity extends Activity {
 
     private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
     private String imageSizeLabel() { return new String[]{"Small", "Big", "List"}[imageSizeMode]; }
-    private void addButtonPrompts(boolean holding) { removePromptOverlay(); if (root == null || viewing && !holding) return; LinearLayout panel = new LinearLayout(this); panel.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); panel.setOrientation(LinearLayout.VERTICAL); if (!viewing) { panel.addView(prompt("switch_a_96dpi", heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Image actions" : "View", 13)); panel.addView(prompt("switch_x_96dpi", heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? "View options" : "Sort", 13)); } panel.addView(prompt("switch_b_96dpi", heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Gallery" : "Exit"), 13)); FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.BOTTOM); panel.setBackgroundColor(0xaa222529); root.addView(panel, lp); promptOverlay = panel; }
+    private void addButtonPrompts(boolean holding) {
+        removePromptOverlay();
+        if (root == null || viewing && !holding) return;
+        FrameLayout cluster = new FrameLayout(this);
+        cluster.setPadding(dp(10), dp(6), dp(10), dp(6));
+        cluster.setBackgroundColor(0xaa222529);
+        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Image actions" : (viewing ? "" : "View");
+        String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
+        String y = heldButton == KeyEvent.KEYCODE_BUTTON_Y && holding ? "View options" : "";
+        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Gallery" : "Hold to exit");
+        addClusterButton(cluster, "switch_x_96dpi", x, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        addClusterButton(cluster, "switch_y_96dpi", y, Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        addClusterButton(cluster, "switch_a_96dpi", a, Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+        addClusterButton(cluster, "switch_b_96dpi", b, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(240), dp(132), Gravity.RIGHT | Gravity.BOTTOM);
+        root.addView(cluster, lp);
+        promptOverlay = cluster;
+    }
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int gravity) {
+        LinearLayout item = new LinearLayout(this);
+        item.setGravity(Gravity.CENTER);
+        item.setOrientation(gravity == (Gravity.TOP | Gravity.CENTER_HORIZONTAL) || gravity == (Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL) ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        ImageView buttonIcon = icon(iconName);
+        item.addView(buttonIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        if (!caption.isEmpty()) {
+            TextView text = label(caption, 12);
+            text.setPadding(dp(3), 0, dp(3), 0);
+            item.addView(text);
+        }
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, gravity);
+        cluster.addView(item, params);
+    }
     private void removePromptOverlay() { if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
 
     private void showWheel(String title, String[] labels, int[] actions) {
@@ -578,7 +609,11 @@ public final class MainActivity extends Activity {
                 option.setTag("wheel_option_" + i);
                 panel.addView(option);
             }
-            overlay.addView(panel, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+            overlay.addView(panel, new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.LEFT));
+            FrameLayout.LayoutParams panelParams = (FrameLayout.LayoutParams) panel.getLayoutParams();
+            panelParams.leftMargin = dp(18);
+            panelParams.bottomMargin = dp(18);
+            panel.setLayoutParams(panelParams);
             root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
             radialOverlay = overlay;
         }
