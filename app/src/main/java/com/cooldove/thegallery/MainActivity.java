@@ -44,13 +44,14 @@ public final class MainActivity extends Activity {
     private static final int PICK_FOLDER = 1;
     private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
-    private static final String[] SORTS = {"Newest", "Oldest", "Name A–Z", "Name Z–A"};
+    private static final String[] SORTS = {"Newest", "Oldest", "Name A-Z", "Name Z-A"};
     /** Shared geometry so the XYAB prompt panel and the D-pad wheel line up exactly. */
     private static final int CLUSTER_BUTTON_DP = 26;
     private static final int CLUSTER_INTERVAL_DP = 30;
     private static final int CLUSTER_WIDTH_DP = 250;
     private static final int CLUSTER_HEIGHT_DP = 124;
     private static final int CLUSTER_CENTER_X_DP = 107;
+    private static final long OVERLAY_FADE_MS = 140;
     private final ArrayList<Photo> photos = new ArrayList<>();
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
@@ -88,6 +89,9 @@ public final class MainActivity extends Activity {
     private Runnable exitRunnable;
     private View promptOverlay;
     private View radialOverlay;
+    private View deleteOverlay;
+    private final Set<Integer> pressedKeys = new HashSet<>();
+    private final Set<Integer> swallowedKeyUps = new HashSet<>();
     private HoldRing holdRing;
     private Runnable holdRingTick;
     private long holdRingDuration = LONG_PRESS_MS;
@@ -274,7 +278,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showGrid() {
-        viewing = false; closeWheel(); removePromptOverlay(); root.removeAllViews();
+        viewing = false; closeWheel(); removePromptOverlay(); deleteOverlay = null; swallowedKeyUps.clear(); root.removeAllViews();
         cancelButtonHold();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -299,7 +303,7 @@ public final class MainActivity extends Activity {
 
     private void refreshSummary() {
         if (summary == null) return;
-        summary.setText(SORTS[sort] + "  ·  " + photos.size() + " images");
+        summary.setText(SORTS[sort] + " | " + photos.size() + " images");
     }
 
     private void updateGridHighlight() {
@@ -455,6 +459,20 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (event.getRepeatCount() == 0) pressedKeys.add(key);
+        } else if (event.getAction() == KeyEvent.ACTION_UP) {
+            pressedKeys.remove(key);
+        }
+        if (deleteOverlay != null) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                // Releases of keys that were already held when the confirm opened are swallowed once.
+                if (swallowedKeyUps.remove(key)) return true;
+                if (key == KeyEvent.KEYCODE_BUTTON_A) { closeDeleteConfirm(); deleteCurrentPhoto(); }
+                else if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) closeDeleteConfirm();
+            }
+            return true;
+        }
         if (radialOverlay != null) {
             return handleWheelKey(event);
         }
@@ -694,7 +712,8 @@ public final class MainActivity extends Activity {
         showWheel(labels, actions, new int[4]);
     }
     private void showWheel(String[] labels, int[] actions, int[] toggles) {
-        closeWheel();
+        boolean appearing = radialOverlay == null;
+        removeWheelOverlay();
         activeWheelActions = actions;
         wheelToggleActions = toggles;
         wheelUsesFaceButton = heldButton == KeyEvent.KEYCODE_BUTTON_A || heldButton == KeyEvent.KEYCODE_BUTTON_X || heldButton == KeyEvent.KEYCODE_BUTTON_Y;
@@ -706,8 +725,17 @@ public final class MainActivity extends Activity {
         addClusterButton(cluster, new DpadIcon(DPAD_DOWN), labels[1], centerX, centerY + dp(interval), diameter, Gravity.RIGHT, 0);
         addClusterButton(cluster, new DpadIcon(DPAD_LEFT), labels[2], centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
         addClusterButton(cluster, new DpadIcon(DPAD_RIGHT), labels[3], centerX + dp(interval), centerY, diameter, Gravity.RIGHT, 0);
-        root.addView(cluster, clusterParams(Gravity.LEFT));
-        radialOverlay = cluster;
+        FrameLayout overlay = new FrameLayout(this);
+        View scrim = new View(this);
+        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x00000000, 0x59000000, 0x99000000}));
+        overlay.addView(scrim, new FrameLayout.LayoutParams(-1, dp(CLUSTER_HEIGHT_DP), Gravity.BOTTOM));
+        overlay.addView(cluster, clusterParams(Gravity.LEFT));
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        radialOverlay = overlay;
+        if (appearing) {
+            overlay.setAlpha(0f);
+            overlay.animate().alpha(1f).setDuration(OVERLAY_FADE_MS).start();
+        }
     }
     private boolean handleWheelKey(KeyEvent e) {
         if (e.getAction() == KeyEvent.ACTION_UP && wheelUsesFaceButton && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
@@ -766,9 +794,82 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void closeWheel() { if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay); radialOverlay = null; activeWheelActions = null; wheelToggleActions = null; wheelUsesFaceButton = false; }
+    private void closeWheel() {
+        View closing = radialOverlay;
+        radialOverlay = null;
+        activeWheelActions = null;
+        wheelToggleActions = null;
+        wheelUsesFaceButton = false;
+        if (closing != null && closing.getParent() == root) {
+            closing.animate().alpha(0f).setDuration(OVERLAY_FADE_MS).withEndAction(() -> root.removeView(closing)).start();
+        }
+    }
+    private void removeWheelOverlay() {
+        if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay);
+        radialOverlay = null;
+    }
     private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
-    private void showDeleteConfirmation() { if (photos.isEmpty()) return; android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this).setMessage("Delete this image?").setPositiveButton("A · YES", (d,w) -> deleteCurrentPhoto()).setNegativeButton("B · NO", (d,w) -> {}).create(); dialog.setOnShowListener(d -> { dialog.getButton(-1).setText("A · YES"); dialog.getButton(-2).setText("B · NO"); }); dialog.show(); }
+    private void showDeleteConfirmation() {
+        if (photos.isEmpty() || deleteOverlay != null) return;
+        // The key that opened this confirm is usually still held; its release must not confirm.
+        cancelButtonHold();
+        swallowedKeyUps.clear();
+        swallowedKeyUps.addAll(pressedKeys);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable panelBackground = new GradientDrawable();
+        panelBackground.setColor(0xff272b30);
+        panelBackground.setCornerRadius(dp(16));
+        panel.setBackground(panelBackground);
+        TextView message = label("Delete this image?", 20);
+        message.setPadding(dp(24), dp(24), dp(24), dp(20));
+        panel.addView(message, new LinearLayout.LayoutParams(-1, -2));
+        View divider = new View(this);
+        divider.setBackgroundColor(0xff3a3f46);
+        panel.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        View confirm = dialogButton("switch_a_96dpi", "Delete");
+        View cancel = dialogButton("switch_b_96dpi", "Cancel");
+        row.addView(confirm, new LinearLayout.LayoutParams(0, -2, 1));
+        row.addView(cancel, new LinearLayout.LayoutParams(0, -2, 1));
+        panel.addView(row, new LinearLayout.LayoutParams(-1, -2));
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(0x99000000);
+        overlay.setClickable(true);
+        overlay.setOnClickListener(v -> closeDeleteConfirm());
+        overlay.addView(panel, new FrameLayout.LayoutParams(dp(400), -2, Gravity.CENTER));
+        confirm.setOnClickListener(v -> { closeDeleteConfirm(); deleteCurrentPhoto(); });
+        cancel.setOnClickListener(v -> closeDeleteConfirm());
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        deleteOverlay = overlay;
+        overlay.setAlpha(0f);
+        overlay.animate().alpha(1f).setDuration(OVERLAY_FADE_MS).start();
+    }
+    private void closeDeleteConfirm() {
+        View closing = deleteOverlay;
+        deleteOverlay = null;
+        swallowedKeyUps.clear();
+        if (closing != null && closing.getParent() == root) {
+            closing.animate().alpha(0f).setDuration(OVERLAY_FADE_MS).withEndAction(() -> root.removeView(closing)).start();
+        }
+        if (!viewing) addButtonPrompts(false);
+    }
+    /** Dialog action button: controller icon + caption, never focusable so the d-pad cannot select it. */
+    private View dialogButton(String iconName, String text) {
+        LinearLayout button = new LinearLayout(this);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(16), dp(18), dp(16), dp(18));
+        button.setFocusable(false);
+        button.setFocusableInTouchMode(false);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        iconParams.rightMargin = dp(8);
+        button.addView(icon(iconName), iconParams);
+        TextView caption = label(text, 17);
+        caption.setPadding(0, 0, 0, 0);
+        button.addView(caption);
+        return button;
+    }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
     private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
