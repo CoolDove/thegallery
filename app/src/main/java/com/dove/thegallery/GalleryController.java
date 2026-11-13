@@ -109,6 +109,13 @@ final class GalleryController implements ScreenController {
             return true;
         }
 
+        // With no folder configured, A is the explicit choose-folder action; do not
+        // route it through the hold-to-open wheel, which suppresses its short press.
+        if (!activity.hasFolder() && key == KeyEvent.KEYCODE_BUTTON_A) {
+            if (down && event.getRepeatCount() == 0) activity.pickFolder();
+            return true;
+        }
+
         if (down && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) {
             cancelChordHintReveal();
             fastTop = false;
@@ -195,6 +202,7 @@ final class GalleryController implements ScreenController {
     }
 
     private void openWheel(int heldKey) {
+        interaction.completeHoldProgress();
         HintPanel panel = HintPanel.wheel();
         if (heldKey == KeyEvent.KEYCODE_BUTTON_A) {
             panel.up("Delete", 0, null).down("", 0, null).left("Share", 0, null).right("", 0, null);

@@ -138,6 +138,19 @@ final class InteractionSystem {
 
     int heldKey() { return heldKey; }
 
+    /** Mark a hold complete before running an early action, preventing its progress ring from restarting. */
+    void completeHoldProgress() {
+        heldSince = SystemClock.uptimeMillis() - getMaximumHoldRingDuration();
+        for (HoldRingTarget target : holdRingTargets) target.ring.setProgress(1f);
+        stopRingTicker();
+    }
+
+    private long getMaximumHoldRingDuration() {
+        long duration = 0;
+        for (HoldRingTarget target : holdRingTargets) duration = Math.max(duration, target.duration);
+        return duration;
+    }
+
     private void cancelHoldState() {
         if (holdHintRunnable != null) handler.removeCallbacks(holdHintRunnable);
         if (holdLongPressRunnable != null) handler.removeCallbacks(holdLongPressRunnable);
