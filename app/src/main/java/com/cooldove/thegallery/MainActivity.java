@@ -494,6 +494,23 @@ public final class MainActivity extends Activity {
             }
             return true;
         }
+        if (!viewing && grid != null && !photos.isEmpty()) {
+            boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP)
+                    || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
+            boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN)
+                    || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
+            if ((topChord && key == KeyEvent.KEYCODE_BUTTON_X)
+                    || (bottomChord && key == KeyEvent.KEYCODE_BUTTON_B)) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    selected = topChord ? 0 : photos.size() - 1;
+                    grid.requestFocus();
+                    grid.setSelection(selected);
+                    grid.smoothScrollToPosition(selected);
+                    updateGridHighlight();
+                }
+                return true;
+            }
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == KeyEvent.KEYCODE_BUTTON_B && radialOverlay == null) {
                 boolean wasLongPress = longPressTriggered;
