@@ -53,6 +53,7 @@ import com.google.zxing.common.BitMatrix;
 
 public final class MainActivity extends Activity {
     private static final int SHARE_PORT = 8765;
+    private static final int SHARE_FALLBACK_PORTS = 20;
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
     private static final int EXIT_HOLD_DURATION_MS = 1000;
@@ -860,7 +861,7 @@ public final class MainActivity extends Activity {
         final String token = randomToken();
         final Photo photo = photos.get(selected);
         try {
-            ServerSocket server = new ServerSocket(SHARE_PORT, 1, java.net.InetAddress.getByName("0.0.0.0"));
+            ServerSocket server = openShareServer();
             server.setSoTimeout(0);
             shareServer = server;
             String address = localAddress();
@@ -905,6 +906,15 @@ public final class MainActivity extends Activity {
             catch (Exception ignored) { }
         }
         runOnUiThread(this::shareListenerStopped);
+    }
+    private ServerSocket openShareServer() throws java.io.IOException {
+        java.net.InetAddress bindAddress = java.net.InetAddress.getByName("0.0.0.0");
+        java.io.IOException lastError = null;
+        for (int offset = 0; offset <= SHARE_FALLBACK_PORTS; offset++) {
+            try { return new ServerSocket(SHARE_PORT + offset, 1, bindAddress); }
+            catch (java.io.IOException e) { lastError = e; }
+        }
+        throw lastError == null ? new java.io.IOException("No available sharing port") : lastError;
     }
     private String safeFilename(String name) { return (name == null ? "image" : name).replaceAll("[^A-Za-z0-9._-]", "_"); }
     private String randomToken() { byte[] bytes = new byte[16]; new SecureRandom().nextBytes(bytes); StringBuilder s = new StringBuilder(); for (byte b : bytes) s.append(String.format(Locale.ROOT, "%02x", b & 255)); return s.toString(); }
