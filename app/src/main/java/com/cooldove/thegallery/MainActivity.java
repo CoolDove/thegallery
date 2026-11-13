@@ -57,6 +57,7 @@ public final class MainActivity extends Activity {
     private FrameLayout root;
     private GridView grid;
     private TextView status;
+    private TextView summary;
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
@@ -88,6 +89,7 @@ public final class MainActivity extends Activity {
     private long heldButtonAt;
     private boolean longPressTriggered;
     private Runnable longPressRunnable;
+    private Runnable holdHintRunnable;
     private int sortDirection;
     private int imageSizeMode;
     private int[] activeWheelActions;
@@ -272,7 +274,8 @@ public final class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
         status = null;
-        TextView summary = label(SORTS[sort] + "  ·  " + photos.size() + " images", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
+        summary = label("", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
+        refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
         grid.setOnItemClickListener((parent, view, position, id) -> { selected = position; openPhoto(); });
@@ -286,6 +289,11 @@ public final class MainActivity extends Activity {
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
         grid.setSelection(selected); grid.requestFocus(); grid.post(() -> { if (grid != null) { grid.requestFocus(); updateGridHighlight(); } });
+    }
+
+    private void refreshSummary() {
+        if (summary == null) return;
+        summary.setText(SORTS[sort] + "  ·  " + photos.size() + " images");
     }
 
     private void updateGridHighlight() {
@@ -462,16 +470,18 @@ public final class MainActivity extends Activity {
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == KeyEvent.KEYCODE_BUTTON_B && radialOverlay == null) {
                 boolean wasLongPress = longPressTriggered;
+                boolean passedHint = holdPassedHint();
                 cancelButtonHold();
-                if (!wasLongPress && viewing) showGrid();
-                else if (!wasLongPress && folder == null) pickFolder();
-                else if (!wasLongPress) addButtonPrompts(false);
+                if (!wasLongPress && !passedHint && viewing) showGrid();
+                else if (!wasLongPress && !passedHint && folder == null) pickFolder();
+                else if (!viewing) addButtonPrompts(false);
                 return true;
             }
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); boolean wasLongPress = longPressTriggered; heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (!wasLongPress && viewing) showGrid(); else addButtonPrompts(false); return true; }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
             if (event.getAction() == KeyEvent.ACTION_UP) {
-                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); } }
+                boolean passedHint = holdPassedHint();
+                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held && !passedHint) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); } else if (!viewing) addButtonPrompts(false); }
                 else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); }
             }
             return true;
@@ -485,8 +495,9 @@ public final class MainActivity extends Activity {
             }
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key) {
                 boolean wasLongPress = longPressTriggered;
+                boolean passedHint = holdPassedHint();
                 cancelButtonHold();
-                if (!wasLongPress) performFaceButtonShortPress(key);
+                if (!wasLongPress && !passedHint) performFaceButtonShortPress(key);
                 if (!viewing) addButtonPrompts(false);
                 return true;
             }
@@ -535,24 +546,33 @@ public final class MainActivity extends Activity {
         if (grid != null) {
             ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
             grid.setSelection(selected);
+            refreshSummary();
         }
     }
 
     private void startButtonHold(int key) {
         if (heldButton != KeyEvent.KEYCODE_UNKNOWN) return;
         heldButton = key; heldButtonAt = android.os.SystemClock.uptimeMillis(); longPressTriggered = false;
-        addButtonPrompts(true);
+        boolean holdAction = key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_X || (key == KeyEvent.KEYCODE_BUTTON_A && !viewing);
+        if (holdAction) {
+            holdHintRunnable = () -> { if (heldButton != key) return; addButtonPrompts(true); };
+            handler.postDelayed(holdHintRunnable, HOLD_HINT_DELAY_MS);
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             exitRunnable = new Runnable() { @Override public void run() { if (android.os.SystemClock.uptimeMillis() - heldButtonAt >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
             handler.post(exitRunnable);
         } else {
             longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
             handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
-            handler.postDelayed(() -> { if (heldButton == key && !longPressTriggered) addButtonPrompts(true); }, HOLD_HINT_DELAY_MS);
         }
     }
 
-    private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
+    /** True once the press has lasted long enough that short-press behavior must be suppressed. */
+    private boolean holdPassedHint() {
+        return heldButton != KeyEvent.KEYCODE_UNKNOWN && android.os.SystemClock.uptimeMillis() - heldButtonAt >= HOLD_HINT_DELAY_MS;
+    }
+
+    private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; if (holdHintRunnable != null) handler.removeCallbacks(holdHintRunnable); holdHintRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
     private String imageSizeLabel() { return new String[]{"Small", "Big", "List"}[imageSizeMode]; }
     private void addButtonPrompts(boolean holding) {
         removePromptOverlay();
