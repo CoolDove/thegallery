@@ -202,6 +202,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        // The picker can consume controller key-up events while this activity is
+        // paused; never let a stale pre-picker chord leak into Settings/Gallery.
+        pressedKeys.clear();
+        resetGalleryChordState();
         if ((request == PICK_FOLDER || request == PICK_SOURCE) && result == RESULT_OK && data != null && data.getData() != null) {
             folder = data.getData();
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
@@ -662,6 +666,31 @@ public final class MainActivity extends Activity {
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
         }
+        if (event.getAction() == KeyEvent.ACTION_UP && swallowedKeyUps.remove(key)) return true;
+        // Settings owns its complete input path. Do this before gallery chord,
+        // wheel, and hold processing so stale gallery state cannot handle input.
+        if (settings) {
+            if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) {
+                closeSettings();
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (!settingsActions.isEmpty()) { settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); }
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (!settingsActions.isEmpty()) { settingsFocus = Math.floorMod(settingsFocus - 1, settingsActions.size()); focusSettingsAction(); }
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                    if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick();
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
+            }
+            return true;
+        }
         if (activeScreen == Screen.GALLERY && !viewing && !settings && grid != null && isDpadKey(key)) {
             boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
             boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
@@ -686,30 +715,6 @@ public final class MainActivity extends Activity {
                 && event.getRepeatCount() == 0 && isDpadKey(key)) {
             showHeldButtonWheel();
             return handleWheelKey(event);
-        }
-        if (settings) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && (isDpadKey(key) || key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) buttonHints.showSettings();
-            if ((key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)
-                    && event.getAction() == KeyEvent.ACTION_UP) {
-                closeSettings();
-                return true;
-            }
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                    settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); return true;
-                }
-                if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    settingsFocus = Math.floorMod(settingsFocus - 1, settingsActions.size()); focusSettingsAction(); return true;
-                }
-                if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                    if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
-                }
-                if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) {
-                    if (event.getAction() == KeyEvent.ACTION_DOWN) closeSettings();
-                    return true;
-                }
-            }
-            return true;
         }
         if (!viewing && grid != null && !photos.isEmpty()) {
             boolean topChord = fastScrollTopChord;
