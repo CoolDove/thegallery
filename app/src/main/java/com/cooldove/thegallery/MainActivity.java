@@ -86,6 +86,8 @@ public final class MainActivity extends Activity {
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
+    private boolean fastScrollTopChord;
+    private boolean fastScrollBottomChord;
     private boolean sharing;
     private ServerSocket shareServer;
     private Thread shareThread;
@@ -493,6 +495,14 @@ public final class MainActivity extends Activity {
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
         }
+        if (!viewing && grid != null && isDpadKey(key)) {
+            boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
+            boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
+            boolean changed = topChord != fastScrollTopChord || bottomChord != fastScrollBottomChord;
+            fastScrollTopChord = topChord;
+            fastScrollBottomChord = bottomChord;
+            if (changed) addButtonPrompts(topChord || bottomChord);
+        }
         if (deleteOverlay != null) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 // Releases of keys that were already held when the confirm opened are swallowed once.
@@ -524,6 +534,17 @@ public final class MainActivity extends Activity {
                 if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
             }
             return true;
+        }
+        if (!viewing && grid != null && !photos.isEmpty()) {
+            boolean topChord = fastScrollTopChord;
+            boolean bottomChord = fastScrollBottomChord;
+            if ((topChord && key == KeyEvent.KEYCODE_BUTTON_X)
+                    || (bottomChord && key == KeyEvent.KEYCODE_BUTTON_B)) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    scrollGridToEdge(topChord, false);
+                }
+                return true;
+            }
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == KeyEvent.KEYCODE_BUTTON_B && radialOverlay == null) {
@@ -594,6 +615,18 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void scrollGridToEdge(boolean top, boolean animate) {
+        if (grid == null || photos.isEmpty()) return;
+        selected = top ? 0 : photos.size() - 1;
+        grid.requestFocus();
+        if (animate) grid.smoothScrollToPosition(selected);
+        else {
+            grid.setSelection(selected);
+            grid.post(() -> { if (grid != null) grid.setSelection(selected); });
+        }
+        updateGridHighlight();
+    }
+
     private void applySortFromWheel() {
         String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
         sort = (sort + 1) % SORTS.length;
@@ -637,20 +670,24 @@ public final class MainActivity extends Activity {
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
         // cluster.setBackgroundColor(0x99000000);
-        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
-        String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
-        String y = viewing ? "" : "Select";
-        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
+        boolean fastTop = holding && fastScrollTopChord;
+        boolean fastBottom = holding && fastScrollBottomChord;
+        String a = fastTop || fastBottom ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
+        String x = fastTop ? "To Top" : fastBottom ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
+        String y = viewing || fastTop || fastBottom ? "" : "Select";
+        String b = fastBottom ? "To Bottom" : fastTop ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
         int diameter = dp(CLUSTER_BUTTON_DP);
         int interval = CLUSTER_INTERVAL_DP;
         int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
         boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
         boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
         boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
-        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0);
+        Runnable xPromptAction = !viewing ? () -> scrollGridToEdge(true, false) : null;
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0, xPromptAction);
         addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
-        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0);
-        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0, null);
+        Runnable bPromptAction = !viewing ? () -> scrollGridToEdge(false, false) : null;
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0, bPromptAction);
         root.addView(cluster, clusterParams(Gravity.RIGHT));
         promptOverlay = cluster;
     }
@@ -660,13 +697,24 @@ public final class MainActivity extends Activity {
     }
     /** captionSide marks the side of the button icon the caption is placed on: TOP = above, BOTTOM = below, LEFT = start, RIGHT = end. holdRingDuration > 0 draws a hold ring around this same icon. */
     private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
-        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration);
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration, null);
     }
     private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
+        addClusterButton(cluster, buttonIcon, caption, cx, cy, diameter, captionSide, holdRingDuration, null);
+    }
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration, Runnable action) {
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration, action);
+    }
+    private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration, Runnable action) {
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
         iconParams.leftMargin = cx - diameter / 2;
         iconParams.topMargin = cy - diameter / 2;
         cluster.addView(buttonIcon, iconParams);
+        if (action != null) {
+            buttonIcon.setClickable(true);
+            buttonIcon.setContentDescription(caption);
+            buttonIcon.setOnClickListener(v -> action.run());
+        }
         if (holdRingDuration > 0) addHoldRing(cluster, cx, cy, diameter + dp(10), holdRingDuration);
         if (caption.isEmpty()) return;
 
