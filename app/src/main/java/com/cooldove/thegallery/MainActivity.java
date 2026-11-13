@@ -95,6 +95,7 @@ public final class MainActivity extends Activity {
     private Thread shareThread;
     private String shareUrl;
     private boolean settings;
+    private Screen activeScreen = Screen.GALLERY;
     private boolean sourcesDirty;
     private boolean scanInProgress;
     private TextView refreshIndicator;
@@ -139,6 +140,22 @@ public final class MainActivity extends Activity {
     private int[] activeWheelActions;
     private int[] wheelToggleActions;
     private boolean wheelUsesFaceButton;
+
+    private enum Screen { GALLERY, SETTINGS, VIEWER }
+
+    /** Owns shared prompt rendering; each screen decides when its prompt state changes. */
+    private final class ButtonHints {
+        void showGallery(boolean holding) { activeScreen = Screen.GALLERY; render(holding); }
+        void showSettings() { activeScreen = Screen.SETTINGS; render(false); }
+        void showViewer() { activeScreen = Screen.VIEWER; render(false); }
+        void refresh(boolean holding) { render(holding); }
+        private void render(boolean holding) {
+            removePromptOverlay();
+            if (root == null || activeScreen == Screen.VIEWER && !holding) return;
+            renderButtonHints(holding);
+        }
+    }
+    private final ButtonHints buttonHints = new ButtonHints();
 
     private static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -332,8 +349,10 @@ public final class MainActivity extends Activity {
         resetButtonHoldForUiChange();
         if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settings = true;
+        activeScreen = Screen.SETTINGS;
         settingsActions.clear();
         root.removeAllViews();
+        removePromptOverlay();
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -379,6 +398,7 @@ public final class MainActivity extends Activity {
         addClusterButton(backCluster, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0);
         backCluster.setOnClickListener(v -> closeSettings());
         root.addView(backCluster, clusterParams(Gravity.RIGHT));
+        buttonHints.showSettings();
         settingsFocus = Math.max(0, settingsActions.size() - 1);
         focusSettingsAction();
     }
@@ -415,7 +435,7 @@ public final class MainActivity extends Activity {
 
     private void showGrid() {
         if (sourcesDirty && !scanInProgress) { sourcesDirty = false; scan(); return; }
-        viewing = false; closeWheel(); removePromptOverlay(); deleteOverlay = null; swallowedKeyUps.clear(); root.removeAllViews();
+        viewing = false; settings = false; closeWheel(); removePromptOverlay(); deleteOverlay = null; swallowedKeyUps.clear(); root.removeAllViews();
         cancelButtonHold();
         querySourceFileCounts(false);
         startDirectoryCountPolling();
@@ -436,7 +456,7 @@ public final class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
-        addButtonPrompts(false);
+        buttonHints.showGallery(false);
         if (photos.isEmpty()) { empty("No images here. Choose another folder.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
@@ -572,12 +592,13 @@ public final class MainActivity extends Activity {
 
     private void openPhoto() {
         if (photos.isEmpty()) return;
+        resetButtonHoldForUiChange();
         viewing = true; root.removeAllViews();
         fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff111315); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
-        addButtonPrompts(false);
+        buttonHints.showViewer();
     }
 
     private void displayPhoto() {
@@ -643,7 +664,7 @@ public final class MainActivity extends Activity {
             boolean changed = topChord != fastScrollTopChord || bottomChord != fastScrollBottomChord;
             fastScrollTopChord = topChord;
             fastScrollBottomChord = bottomChord;
-            if (changed) addButtonPrompts(topChord || bottomChord);
+            if (changed) buttonHints.showGallery(topChord || bottomChord);
         }
         if (deleteOverlay != null) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -663,6 +684,7 @@ public final class MainActivity extends Activity {
             return handleWheelKey(event);
         }
         if (settings) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && (isDpadKey(key) || key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) buttonHints.showSettings();
             if ((key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)
                     && event.getAction() == KeyEvent.ACTION_UP) {
                 closeSettings();
@@ -703,15 +725,15 @@ public final class MainActivity extends Activity {
                 cancelButtonHold();
                 if (!wasLongPress && !passedHint && viewing) showGrid();
                 else if (!wasLongPress && !passedHint && folder == null) pickFolder();
-                else if (!viewing) addButtonPrompts(false);
+                else if (!viewing && !settings) buttonHints.showGallery(false);
                 return true;
             }
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); boolean wasLongPress = longPressTriggered; heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (!wasLongPress && viewing) showGrid(); else addButtonPrompts(false); return true; }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 boolean passedHint = holdPassedHint();
-                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held && !passedHint) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); } else if (!viewing) addButtonPrompts(false); }
-                else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); }
+                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held && !passedHint) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else buttonHints.showGallery(false); } else if (!viewing && !settings) buttonHints.showGallery(false); }
+                else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else buttonHints.showGallery(false); }
             }
             return true;
         }
@@ -730,7 +752,7 @@ public final class MainActivity extends Activity {
                 boolean passedHint = holdPassedHint();
                 cancelButtonHold();
                 if (!wasLongPress && !passedHint) performFaceButtonShortPress(key);
-                if (!viewing) addButtonPrompts(false);
+                if (!viewing && !settings) buttonHints.showGallery(false);
                 return true;
             }
             return true;
@@ -845,9 +867,10 @@ public final class MainActivity extends Activity {
 
     private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; if (holdHintRunnable != null) handler.removeCallbacks(holdHintRunnable); holdHintRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
     private String imageSizeLabel() { return DISPLAY_MODES[displayMode]; }
-    private void addButtonPrompts(boolean holding) {
-        removePromptOverlay();
-        if (root == null || viewing && !holding) return;
+    private void addButtonPrompts(boolean holding) { buttonHints.refresh(holding); }
+
+    private void renderButtonHints(boolean holding) {
+        if (root == null) return;
         FrameLayout cluster = new FrameLayout(this);
         // cluster.setBackgroundColor(0x99000000);
         boolean fastTop = holding && fastScrollTopChord;
@@ -1281,7 +1304,7 @@ public final class MainActivity extends Activity {
         if (closing != null && closing.getParent() == root) {
             closing.animate().alpha(0f).setDuration(OVERLAY_FADE_MS).withEndAction(() -> root.removeView(closing)).start();
         }
-        if (!viewing) addButtonPrompts(false);
+        if (!viewing && !settings) buttonHints.showGallery(false);
     }
     /** Dialog action button: controller icon + caption, never focusable so the d-pad cannot select it. */
     private View dialogButton(String iconName, String text) {
