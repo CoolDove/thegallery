@@ -918,8 +918,15 @@ public final class MainActivity extends Activity {
         background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.42f,0,0,0,0, 0,0.42f,0,0,0, 0,0,0.42f,0,0, 0,0,0,1,0})));
         root.addView(background, new FrameLayout.LayoutParams(-1, -1));
         loader.execute(() -> {
-            Bitmap image = decode(photo, 1400);
-            if (image != null) runOnUiThread(() -> { if (sharing && background.getParent() == root) background.setImageBitmap(image); });
+            Bitmap image = decode(photo, 480);
+            if (image != null) {
+                int blurWidth = Math.max(1, image.getWidth() / 18);
+                int blurHeight = Math.max(1, image.getHeight() / 18);
+                Bitmap reduced = Bitmap.createScaledBitmap(image, blurWidth, blurHeight, true);
+                image = Bitmap.createScaledBitmap(reduced, image.getWidth(), image.getHeight(), true);
+            }
+            Bitmap backdrop = image;
+            if (backdrop != null) runOnUiThread(() -> { if (sharing && background.getParent() == root) background.setImageBitmap(backdrop); });
         });
         View scrim = new View(this);
         scrim.setBackgroundColor(0x66000000);
