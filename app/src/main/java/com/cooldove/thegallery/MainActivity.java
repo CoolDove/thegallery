@@ -479,6 +479,11 @@ public final class MainActivity extends Activity {
         if (radialOverlay != null) {
             return handleWheelKey(event);
         }
+        if (heldButton != KeyEvent.KEYCODE_UNKNOWN && event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getRepeatCount() == 0 && isDpadKey(key)) {
+            showHeldButtonWheel();
+            return handleWheelKey(event);
+        }
         if (settings) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
@@ -753,11 +758,23 @@ public final class MainActivity extends Activity {
         else if (toggle == 2) imageSizeMode = (imageSizeMode + 1) % 3;
         if (toggle != 0) {
             showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
-        } else {
+        } else if (action != 0) {
             closeWheel();
             if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
         }
         return true;
+    }
+    private static boolean isDpadKey(int key) {
+        return key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
+                || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+    private void showHeldButtonWheel() {
+        longPressTriggered = true;
+        if (heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing) {
+            showWheel(new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0});
+        } else if (heldButton == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
+            showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0});
+        }
     }
     private static final int DPAD_UP = 0, DPAD_DOWN = 1, DPAD_LEFT = 2, DPAD_RIGHT = 3;
 
