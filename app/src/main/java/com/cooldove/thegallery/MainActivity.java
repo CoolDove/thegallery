@@ -68,6 +68,8 @@ public final class MainActivity extends Activity {
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
+    private boolean fastScrollTopChord;
+    private boolean fastScrollBottomChord;
     private boolean settings;
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
@@ -467,6 +469,14 @@ public final class MainActivity extends Activity {
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
         }
+        if (!viewing && grid != null && isDpadKey(key)) {
+            boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
+            boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
+            boolean changed = topChord != fastScrollTopChord || bottomChord != fastScrollBottomChord;
+            fastScrollTopChord = topChord;
+            fastScrollBottomChord = bottomChord;
+            if (changed) addButtonPrompts(topChord || bottomChord);
+        }
         if (deleteOverlay != null) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 // Releases of keys that were already held when the confirm opened are swallowed once.
@@ -495,14 +505,12 @@ public final class MainActivity extends Activity {
             return true;
         }
         if (!viewing && grid != null && !photos.isEmpty()) {
-            boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP)
-                    || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
-            boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN)
-                    || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
+            boolean topChord = fastScrollTopChord;
+            boolean bottomChord = fastScrollBottomChord;
             if ((topChord && key == KeyEvent.KEYCODE_BUTTON_X)
                     || (bottomChord && key == KeyEvent.KEYCODE_BUTTON_B)) {
                 if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                    scrollGridToEdge(topChord);
+                    scrollGridToEdge(topChord, false);
                 }
                 return true;
             }
@@ -576,11 +584,20 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void scrollGridToEdge(boolean top) {
+    private boolean isDpadKey(int key) {
+        return key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
+                || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    private void scrollGridToEdge(boolean top, boolean animate) {
         if (grid == null || photos.isEmpty()) return;
         selected = top ? 0 : photos.size() - 1;
         grid.requestFocus();
-        grid.smoothScrollToPosition(selected);
+        if (animate) grid.smoothScrollToPosition(selected);
+        else {
+            grid.setSelection(selected);
+            grid.post(() -> { if (grid != null) grid.setSelection(selected); });
+        }
         updateGridHighlight();
     }
 
@@ -627,21 +644,23 @@ public final class MainActivity extends Activity {
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
         // cluster.setBackgroundColor(0x99000000);
-        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
-        String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
-        String y = viewing ? "" : "Select";
-        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
+        boolean fastTop = holding && fastScrollTopChord;
+        boolean fastBottom = holding && fastScrollBottomChord;
+        String a = fastTop || fastBottom ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
+        String x = fastTop ? "To Top" : fastBottom ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
+        String y = viewing || fastTop || fastBottom ? "" : "Select";
+        String b = fastBottom ? "To Bottom" : fastTop ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
         int diameter = dp(CLUSTER_BUTTON_DP);
         int interval = CLUSTER_INTERVAL_DP;
         int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
         boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
         boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
         boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
-        Runnable xPromptAction = !viewing ? () -> scrollGridToEdge(true) : null;
+        Runnable xPromptAction = !viewing ? () -> scrollGridToEdge(true, false) : null;
         addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0, xPromptAction);
         addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
         addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0, null);
-        Runnable bPromptAction = !viewing ? () -> scrollGridToEdge(false) : null;
+        Runnable bPromptAction = !viewing ? () -> scrollGridToEdge(false, false) : null;
         addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0, bPromptAction);
         root.addView(cluster, clusterParams(Gravity.RIGHT));
         promptOverlay = cluster;
