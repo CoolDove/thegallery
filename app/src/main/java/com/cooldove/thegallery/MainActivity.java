@@ -358,7 +358,7 @@ public final class MainActivity extends Activity {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setPadding(dp(8), dp(8), dp(8), dp(8));
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(displayMode == 2 ? 500 : 150), Gravity.TOP);
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(displayMode == 2 ? 210 : 150), Gravity.TOP);
                 imageParams.setMargins(dp(4), dp(4), dp(4), 0);
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
@@ -382,7 +382,7 @@ public final class MainActivity extends Activity {
             cellBackground.setColor(0xff35383d);
             cellBackground.setCornerRadius(dp(6));
             cell.setBackground(cellBackground);
-            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(displayMode == 2 ? 560 : displayMode == 0 ? 166 : 208)));
+            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(displayMode == 2 ? 270 : displayMode == 0 ? 166 : 208)));
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
@@ -769,13 +769,38 @@ public final class MainActivity extends Activity {
         if (toggle == 1) applySortFromWheel();
         else if (toggle == 2) displayMode = (displayMode + 1) % DISPLAY_MODES.length;
         if (toggle != 0) {
-            if (toggle == 2 && grid != null) showGrid();
-            else showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
+            if (toggle == 2) refreshDisplayModeInGrid();
+            refreshWheelToggleLabel();
         } else {
             closeWheel();
             if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
         }
         return true;
+    }
+
+    private void refreshDisplayModeInGrid() {
+        if (grid == null) return;
+        gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(displayMode == 2 ? 300 : 210));
+        grid.setNumColumns(gridColumns);
+        grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190));
+        ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+        grid.setSelection(selected);
+        updateGridHighlight();
+    }
+
+    private void refreshWheelToggleLabel() {
+        if (radialOverlay == null) return;
+        updateWheelLabel(radialOverlay, imageSizeLabel());
+    }
+
+    private void updateWheelLabel(View view, String value) {
+        if (view instanceof TextView) {
+            TextView text = (TextView) view;
+            if (text.getText().toString().matches("Simple|Normal|Detailed|Small|Big|List")) text.setText(value);
+        } else if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) updateWheelLabel(group.getChildAt(i), value);
+        }
     }
     private static final int DPAD_UP = 0, DPAD_DOWN = 1, DPAD_LEFT = 2, DPAD_RIGHT = 3;
 
