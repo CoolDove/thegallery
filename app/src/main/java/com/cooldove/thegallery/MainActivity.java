@@ -4,8 +4,11 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Bitmap;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -34,6 +37,19 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.NetworkInterface;
+import java.net.Inet4Address;
+import java.util.Enumeration;
+import java.security.SecureRandom;
+import java.util.Locale;
+import java.io.BufferedInputStream;
+import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.MultiFormatWriter;
+import com.google.zxing.common.BitMatrix;
 
 public final class MainActivity extends Activity {
     private static final long PHOTO_EXIT_DELAY_MS = 200;
@@ -68,6 +84,10 @@ public final class MainActivity extends Activity {
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
+    private boolean sharing;
+    private ServerSocket shareServer;
+    private Thread shareThread;
+    private String shareUrl;
     private boolean settings;
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
@@ -462,6 +482,10 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (sharing) {
+            if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) { closeShareScreen(); return true; }
+            return true;
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             if (event.getRepeatCount() == 0) pressedKeys.add(key);
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -760,7 +784,7 @@ public final class MainActivity extends Activity {
             showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
         } else if (action != 0) {
             closeWheel();
-            if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
+            if (action == 1) showDeleteConfirmation(); else if (action == 2) showShareScreen();
         }
         return true;
     }
@@ -829,6 +853,88 @@ public final class MainActivity extends Activity {
         radialOverlay = null;
     }
     private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
+    private void showShareScreen() {
+        if (photos.isEmpty()) return;
+        stopShareServer();
+        final String token = randomToken();
+        final Photo photo = photos.get(selected);
+        try {
+            ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getByName("0.0.0.0"));
+            server.setSoTimeout(0);
+            shareServer = server;
+            String address = localAddress();
+            if (address == null) throw new java.io.IOException("No LAN address");
+            shareUrl = "http://" + address + ":" + server.getLocalPort();
+            showShareUi(photo, shareUrl);
+            shareThread = new Thread(() -> serveShare(server, token, photo), "gallery-share");
+            shareThread.start();
+        } catch (Exception e) {
+            showPlaceholder("Unable to start local sharing");
+            showGrid();
+        }
+    }
+    private void shareListenerStopped() { if (sharing) closeShareScreen(); shareServer = null; }
+    private void serveShare(ServerSocket server, String token, Photo photo) {
+        while (!server.isClosed()) {
+            try (Socket client = server.accept()) {
+                client.setSoTimeout(10000);
+                BufferedInputStream in = new BufferedInputStream(client.getInputStream());
+                ByteArrayOutputStream request = new ByteArrayOutputStream();
+                int b, matched = 0;
+                while ((b = in.read()) != -1) {
+                    request.write(b);
+                    if (b == '\n') { if (++matched >= 2) break; } else if (b != '\r') matched = 0;
+                    if (request.size() > 4096) break;
+                }
+                String first = request.toString("US-ASCII").split("\\r?\\n", 2)[0];
+                String expected = "GET / ";
+                OutputStream out = client.getOutputStream();
+                if (!first.startsWith(expected)) {
+                    out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
+                } else {
+                    String mime = getContentResolver().getType(photo.uri);
+                    if (mime == null || !mime.startsWith("image/")) mime = "application/octet-stream";
+                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Disposition: attachment; filename=\"" + safeFilename(photo.name) + "\"\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
+                    try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                        if (image != null) { byte[] buffer = new byte[32768]; int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) out.write(buffer, 0, count); }
+                    }
+                    out.flush();
+                }
+            } catch (java.net.SocketException e) { break; }
+            catch (Exception ignored) { }
+        }
+        runOnUiThread(this::shareListenerStopped);
+    }
+    private String safeFilename(String name) { return (name == null ? "image" : name).replaceAll("[^A-Za-z0-9._-]", "_"); }
+    private String randomToken() { byte[] bytes = new byte[16]; new SecureRandom().nextBytes(bytes); StringBuilder s = new StringBuilder(); for (byte b : bytes) s.append(String.format(Locale.ROOT, "%02x", b & 255)); return s.toString(); }
+    private String localAddress() {
+        try { Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces(); while (interfaces.hasMoreElements()) { NetworkInterface ni = interfaces.nextElement(); if (!ni.isUp() || ni.isLoopback()) continue; Enumeration<java.net.InetAddress> addresses = ni.getInetAddresses(); while (addresses.hasMoreElements()) { java.net.InetAddress a = addresses.nextElement(); if (a instanceof Inet4Address && !a.isLoopbackAddress() && !a.isLinkLocalAddress()) return a.getHostAddress(); } } } catch (Exception ignored) { }
+        return null;
+    }
+    private void showShareUi(Photo photo, String url) {
+        viewing = false; sharing = true; closeWheel(); removePromptOverlay(); root.removeAllViews(); root.setBackgroundColor(0xff181a1d);
+        ImageView background = new ImageView(this);
+        background.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.42f,0,0,0,0, 0,0.42f,0,0,0, 0,0,0.42f,0,0, 0,0,0,1,0})));
+        root.addView(background, new FrameLayout.LayoutParams(-1, -1));
+        loader.execute(() -> {
+            Bitmap image = decode(photo, 1400);
+            if (image != null) runOnUiThread(() -> { if (sharing && background.getParent() == root) background.setImageBitmap(image); });
+        });
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0x66000000);
+        root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(10), dp(24), dp(148));
+        content.setBackgroundColor(0x22000000);
+        TextView filename = label(photo.name, 18); filename.setSingleLine(true); content.addView(filename);
+        try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240); Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565); for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); qrView.setScaleType(ImageView.ScaleType.FIT_CENTER); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(190), dp(190)); qrParams.topMargin = dp(6); qrParams.bottomMargin = dp(6); content.addView(qrView, qrParams); } catch (Exception ignored) { }
+        TextView path = label(url, 16); path.setTextIsSelectable(true); path.setSingleLine(true); path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); path.setPadding(dp(12), dp(6), dp(12), dp(6)); content.addView(path);
+        TextView hint = label("Open on a device on the same Wi-Fi network", 15); content.addView(hint);
+        root.addView(content, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout back = new FrameLayout(this); addClusterButton(back, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0); back.setOnClickListener(v -> closeShareScreen()); root.addView(back, clusterParams(Gravity.RIGHT));
+    }
+    private void closeShareScreen() { stopShareServer(); sharing = false; showGrid(); }
+    private void stopShareServer() { if (shareServer != null) { try { shareServer.close(); } catch (Exception ignored) { } shareServer = null; } shareUrl = null; }
     private void showDeleteConfirmation() {
         if (photos.isEmpty() || deleteOverlay != null) return;
         // The key that opened this confirm is usually still held; its release must not confirm.
@@ -893,5 +999,5 @@ public final class MainActivity extends Activity {
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
     private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
-    @Override protected void onDestroy() { super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
+    @Override protected void onDestroy() { stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
