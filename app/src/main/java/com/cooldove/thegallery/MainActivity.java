@@ -1026,7 +1026,13 @@ public final class MainActivity extends Activity {
         grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190));
         ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
         grid.setSelection(selected);
-        updateGridHighlight();
+        // notifyDataSetChanged/setNumColumns can rebind or relayout children after this
+        // method returns. Apply the custom selection border once those children exist.
+        grid.post(() -> {
+            if (grid == null || viewing) return;
+            grid.setSelection(selected);
+            updateGridHighlight();
+        });
     }
 
     private void refreshWheelToggleLabel() {
