@@ -269,7 +269,8 @@ public final class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View folderButton = prompt("switch_plus_96dpi", "Folder", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
         View settingsButton = prompt("switch_start_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
-        status = label(SORTS[sort] + "  ·  " + photos.size() + " images", 16); bar.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
+        status = null;
+        TextView summary = label(SORTS[sort] + "  ·  " + photos.size() + " images", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
         grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
         grid.setOnItemClickListener((parent, view, position, id) -> { selected = position; openPhoto(); });
@@ -278,11 +279,7 @@ public final class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
-        LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff222529);
-        controls.addView(prompt("switch_a_96dpi", "View · hold: image actions", 15));
-        controls.addView(prompt("switch_x_96dpi", "Sort · hold: view options", 15));
-        controls.addView(prompt("switch_b_96dpi", "Hold: exit", 15));
-        layout.addView(controls, new LinearLayout.LayoutParams(-1, -2));
+        addButtonPrompts(false);
         if (photos.isEmpty()) { empty("No images here. Choose another folder.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
@@ -442,7 +439,11 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
-        if (radialOverlay != null) return handleWheelKey(event);
+        if (radialOverlay != null) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B || event.getKeyCode() == KeyEvent.KEYCODE_BACK) return handleWheelKey(event);
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A || event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_X) return true;
+            return handleWheelKey(event);
+        }
         if (settings) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
@@ -459,7 +460,7 @@ public final class MainActivity extends Activity {
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; removePromptOverlay(); return true; }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); } }
@@ -518,15 +519,37 @@ public final class MainActivity extends Activity {
     private void removePromptOverlay() { if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
 
     private void showWheel(String title, String[] labels, int[] actions) {
-        removePromptOverlay();
-        FrameLayout overlay = new FrameLayout(this); overlay.setBackgroundColor(0x99000000); activeWheelActions = actions;
-        TextView center = label(title + "\n↑  " + labels[0] + "\n↓  " + labels[1] + "\n←  " + labels[2] + "    →  " + labels[3] + "\nRelease to close", 22); center.setBackgroundColor(0xff272b30); center.setFocusable(true); overlay.addView(center, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
-        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1)); radialOverlay = overlay;
+        activeWheelActions = actions;
+        if (radialOverlay == null) {
+            FrameLayout overlay = new FrameLayout(this);
+            overlay.setBackgroundColor(0x99000000);
+            LinearLayout panel = new LinearLayout(this);
+            panel.setOrientation(LinearLayout.VERTICAL);
+            panel.setGravity(Gravity.CENTER);
+            panel.setPadding(dp(24), dp(18), dp(24), dp(18));
+            panel.setBackgroundColor(0xff272b30);
+            TextView heading = label(title, 20);
+            heading.setTag("wheel_title");
+            panel.addView(heading);
+            String[] icons = {"↑  ", "↓  ", "←  ", "→  "};
+            for (int i = 0; i < 4; i++) {
+                TextView option = label(icons[i] + labels[i], 18);
+                option.setTag("wheel_option_" + i);
+                panel.addView(option);
+            }
+            overlay.addView(panel, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+            root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+            radialOverlay = overlay;
+        }
+        LinearLayout panel = (LinearLayout) ((FrameLayout) radialOverlay).getChildAt(0);
+        ((TextView) panel.getChildAt(0)).setText(title);
+        for (int i = 0; i < 4; i++) ((TextView) panel.getChildAt(i + 1)).setText(new String[]{"↑  ", "↓  ", "←  ", "→  "}[i] + labels[i]);
     }
     private boolean handleWheelKey(KeyEvent e) {
-        if (e.getAction() == KeyEvent.ACTION_UP && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; removePromptOverlay(); return true; }
+        if (e.getAction() == KeyEvent.ACTION_UP && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
         if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
-        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); return true; }
+        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; addButtonPrompts(false); return true; }
+        if (direction == heldButton || e.getRepeatCount() > 0) return true;
         int index = direction == KeyEvent.KEYCODE_DPAD_UP ? 0 : direction == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : direction == KeyEvent.KEYCODE_DPAD_LEFT ? 2 : direction == KeyEvent.KEYCODE_DPAD_RIGHT ? 3 : -1;
         if (index < 0) return true;
         int action = activeWheelActions == null ? 0 : activeWheelActions[index];
