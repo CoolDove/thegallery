@@ -108,6 +108,13 @@ public final class MainActivity extends Activity {
             handler.postDelayed(observerRefresh, 350);
         }
     };
+    private final ContentObserver mediaObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+        @Override public void onChange(boolean selfChange, Uri uri) {
+            sourcesDirty = true;
+            handler.removeCallbacks(observerRefresh);
+            handler.postDelayed(observerRefresh, 500);
+        }
+    };
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
     private int gridColumns = 1;
@@ -177,6 +184,7 @@ public final class MainActivity extends Activity {
     private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(0xffffffff); v.setGravity(Gravity.CENTER); v.setPadding(20, 18, 20, 18); return v; }
 
     private void pickFolder() {
+        resetButtonHoldForUiChange();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         Uri current = folder;
         if (current != null && android.os.Build.VERSION.SDK_INT >= 26) intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, current);
@@ -238,7 +246,6 @@ public final class MainActivity extends Activity {
                 selected = 0;
                 if (selectedUri != null) for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
                 scanInProgress = false;
-                sourcesDirty = false;
                 observeDirectories();
                 if (!settings && !viewing && grid != null) {
                     ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
@@ -278,6 +285,7 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        getContentResolver().registerContentObserver(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
         observeDirectories();
         if (root != null) requestRefresh(true);
     }
@@ -286,6 +294,7 @@ public final class MainActivity extends Activity {
         super.onPause();
         sourcesDirty = true;
         handler.removeCallbacks(observerRefresh);
+        getContentResolver().unregisterContentObserver(mediaObserver);
     }
 
     private void sortPhotos() {
@@ -306,6 +315,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showSettings() {
+        resetButtonHoldForUiChange();
         settings = true;
         settingsActions.clear();
         root.removeAllViews();
@@ -374,12 +384,14 @@ public final class MainActivity extends Activity {
     }
 
     private void pickSource() {
+        resetButtonHoldForUiChange();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         if (folder != null && android.os.Build.VERSION.SDK_INT >= 26) intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, folder);
         startActivityForResult(intent, PICK_SOURCE);
     }
 
     private void closeSettings() {
+        resetButtonHoldForUiChange();
         settings = false;
         if (sourcesDirty || photos.isEmpty()) { sourcesDirty = false; scan(); } else showGrid();
     }
@@ -609,6 +621,11 @@ public final class MainActivity extends Activity {
             return handleWheelKey(event);
         }
         if (settings) {
+            if ((key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)
+                    && event.getAction() == KeyEvent.ACTION_UP) {
+                closeSettings();
+                return true;
+            }
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
                     settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); return true;
@@ -618,10 +635,6 @@ public final class MainActivity extends Activity {
                 }
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
-                }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-                    if (event.getAction() == KeyEvent.ACTION_UP) closeSettings();
-                    return true;
                 }
                 if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) {
                     if (event.getAction() == KeyEvent.ACTION_DOWN) closeSettings();
@@ -1196,5 +1209,5 @@ public final class MainActivity extends Activity {
     }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
-    @Override protected void onDestroy() { for (Uri directory : observedDirectories) getContentResolver().unregisterContentObserver(directoryObserver); observedDirectories.clear(); stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
+    @Override protected void onDestroy() { for (Uri directory : observedDirectories) getContentResolver().unregisterContentObserver(directoryObserver); observedDirectories.clear(); getContentResolver().unregisterContentObserver(mediaObserver); stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
