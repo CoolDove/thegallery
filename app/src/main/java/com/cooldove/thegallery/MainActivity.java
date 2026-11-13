@@ -689,7 +689,6 @@ public final class MainActivity extends Activity {
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
         }
-        if (event.getAction() == KeyEvent.ACTION_UP && swallowedKeyUps.remove(key)) return true;
         return (viewing ? viewerInput : galleryInput).handle(event);
     }
 
@@ -704,6 +703,7 @@ public final class MainActivity extends Activity {
     /** Gallery and viewer have separate entry handlers; common controller mechanics stay below. */
     private boolean handleScreenInput(KeyEvent event, boolean viewer) {
         int key = event.getKeyCode();
+        if (event.getAction() == KeyEvent.ACTION_UP && swallowedKeyUps.remove(key)) return true;
         if (activeScreen == Screen.GALLERY && !viewing && !settings && grid != null && isDpadKey(key)) {
             boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
             boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
