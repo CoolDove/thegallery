@@ -52,6 +52,7 @@ import com.google.zxing.MultiFormatWriter;
 import com.google.zxing.common.BitMatrix;
 
 public final class MainActivity extends Activity {
+    private static final int SHARE_PORT = 8765;
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
     private static final int EXIT_HOLD_DURATION_MS = 1000;
@@ -859,7 +860,7 @@ public final class MainActivity extends Activity {
         final String token = randomToken();
         final Photo photo = photos.get(selected);
         try {
-            ServerSocket server = new ServerSocket(0, 1, java.net.InetAddress.getByName("0.0.0.0"));
+            ServerSocket server = new ServerSocket(SHARE_PORT, 1, java.net.InetAddress.getByName("0.0.0.0"));
             server.setSoTimeout(0);
             shareServer = server;
             String address = localAddress();
@@ -911,25 +912,48 @@ public final class MainActivity extends Activity {
         try { Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces(); while (interfaces.hasMoreElements()) { NetworkInterface ni = interfaces.nextElement(); if (!ni.isUp() || ni.isLoopback()) continue; Enumeration<java.net.InetAddress> addresses = ni.getInetAddresses(); while (addresses.hasMoreElements()) { java.net.InetAddress a = addresses.nextElement(); if (a instanceof Inet4Address && !a.isLoopbackAddress() && !a.isLinkLocalAddress()) return a.getHostAddress(); } } } catch (Exception ignored) { }
         return null;
     }
+    private Bitmap gaussianBlur(Bitmap source) {
+        int width = Math.max(1, Math.round(source.getWidth() * 0.7f));
+        int height = Math.max(1, Math.round(source.getHeight() * 0.7f));
+        Bitmap scaled = Bitmap.createScaledBitmap(source, width, height, true);
+        if (scaled != source) source.recycle();
+        int[] pixels = new int[width * height];
+        int[] temp = new int[pixels.length];
+        scaled.getPixels(pixels, 0, width, 0, 0, width, height);
+        final int radius = 5;
+        final float sigma = 2.2f;
+        float[] weights = new float[radius * 2 + 1];
+        float sum = 0;
+        for (int i = -radius; i <= radius; i++) { float w = (float)Math.exp(-(i * i) / (2f * sigma * sigma)); weights[i + radius] = w; sum += w; }
+        for (int i = 0; i < weights.length; i++) weights[i] /= sum;
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            float a=0,r=0,g=0,b=0;
+            for (int k=-radius;k<=radius;k++) { int c=pixels[y*width+Math.max(0,Math.min(width-1,x+k))]; float w=weights[k+radius]; a+=((c>>>24)&255)*w; r+=((c>>>16)&255)*w; g+=((c>>>8)&255)*w; b+=(c&255)*w; }
+            temp[y*width+x]=((int)a<<24)|((int)r<<16)|((int)g<<8)|(int)b;
+        }
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            float a=0,r=0,g=0,b=0;
+            for (int k=-radius;k<=radius;k++) { int c=temp[Math.max(0,Math.min(height-1,y+k))*width+x]; float w=weights[k+radius]; a+=((c>>>24)&255)*w; r+=((c>>>16)&255)*w; g+=((c>>>8)&255)*w; b+=(c&255)*w; }
+            pixels[y*width+x]=((int)a<<24)|((int)r<<16)|((int)g<<8)|(int)b;
+        }
+        Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        result.setPixels(pixels, 0, width, 0, 0, width, height);
+        scaled.recycle();
+        return result;
+    }
     private void showShareUi(Photo photo, String url) {
         viewing = false; sharing = true; closeWheel(); removePromptOverlay(); root.removeAllViews(); root.setBackgroundColor(0xff181a1d);
         ImageView background = new ImageView(this);
         background.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.42f,0,0,0,0, 0,0.42f,0,0,0, 0,0,0.42f,0,0, 0,0,0,1,0})));
+        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.71f,0,0,0,0, 0,0.71f,0,0,0, 0,0,0.71f,0,0, 0,0,0,1,0})));
         root.addView(background, new FrameLayout.LayoutParams(-1, -1));
         loader.execute(() -> {
-            Bitmap image = decode(photo, 480);
-            if (image != null) {
-                int blurWidth = Math.max(1, image.getWidth() / 18);
-                int blurHeight = Math.max(1, image.getHeight() / 18);
-                Bitmap reduced = Bitmap.createScaledBitmap(image, blurWidth, blurHeight, true);
-                image = Bitmap.createScaledBitmap(reduced, image.getWidth(), image.getHeight(), true);
-            }
-            Bitmap backdrop = image;
+            Bitmap source = decode(photo, 960);
+            Bitmap backdrop = source == null ? null : gaussianBlur(source);
             if (backdrop != null) runOnUiThread(() -> { if (sharing && background.getParent() == root) background.setImageBitmap(backdrop); });
         });
         View scrim = new View(this);
-        scrim.setBackgroundColor(0x66000000);
+        scrim.setBackgroundColor(0x33000000);
         root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(10), dp(24), dp(148));
         content.setBackgroundColor(0x22000000);
