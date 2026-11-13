@@ -181,6 +181,10 @@ public final class MainActivity extends Activity {
             } else {
                 sources.clear(); sources.add(folder); persistSources(); scan();
             }
+        } else if (request == PICK_SOURCE && settings) {
+            // The document picker may finish without a selection; rebuild the settings
+            // screen either way so its controller focus and Back control are restored.
+            showSettings();
         } else if (request == PICK_FOLDER && folder == null) empty("No folder selected", true);
     }
 
@@ -531,7 +535,14 @@ public final class MainActivity extends Activity {
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
                 }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
+                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) closeSettings();
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) {
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) closeSettings();
+                    return true;
+                }
             }
             return true;
         }
@@ -565,7 +576,10 @@ public final class MainActivity extends Activity {
             }
             return true;
         }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) {
+            if (settings) closeSettings(); else { resetButtonHoldForUiChange(); showSettings(); }
+            return true;
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_Y) return true;
         if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
@@ -656,6 +670,14 @@ public final class MainActivity extends Activity {
             longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel(new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
             handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
         }
+    }
+
+    /** Cancel any in-progress long press before changing UI state or presenting a modal UI. */
+    private void resetButtonHoldForUiChange() {
+        int canceledButton = heldButton;
+        cancelButtonHold();
+        longPressTriggered = false;
+        if (canceledButton != KeyEvent.KEYCODE_UNKNOWN) swallowedKeyUps.add(canceledButton);
     }
 
     /** True once the press has lasted long enough that short-press behavior must be suppressed. */
@@ -1029,9 +1051,9 @@ public final class MainActivity extends Activity {
     private void showDeleteConfirmation() {
         if (photos.isEmpty() || deleteOverlay != null) return;
         // The key that opened this confirm is usually still held; its release must not confirm.
-        cancelButtonHold();
         swallowedKeyUps.clear();
         swallowedKeyUps.addAll(pressedKeys);
+        resetButtonHoldForUiChange();
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable panelBackground = new GradientDrawable();
