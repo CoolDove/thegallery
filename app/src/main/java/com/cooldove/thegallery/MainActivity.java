@@ -38,6 +38,8 @@ public final class MainActivity extends Activity {
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
     private static final int EXIT_HOLD_DURATION_MS = 1000;
+    private static final int LONG_PRESS_MS = 550;
+    private static final int HOLD_HINT_DELAY_MS = 150;
     private static final int PICK_FOLDER = 1;
     private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
@@ -79,6 +81,15 @@ public final class MainActivity extends Activity {
     private TextView exitHint;
     private Runnable exitRunnable;
     private Runnable exitHintRunnable;
+    private View promptOverlay;
+    private View radialOverlay;
+    private int heldButton = KeyEvent.KEYCODE_UNKNOWN;
+    private long heldButtonAt;
+    private boolean longPressTriggered;
+    private Runnable longPressRunnable;
+    private int sortDirection;
+    private int imageSizeMode;
+    private int[] activeWheelActions;
 
     private static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -252,7 +263,8 @@ public final class MainActivity extends Activity {
     }
 
     private void showGrid() {
-        viewing = false; root.removeAllViews();
+        viewing = false; closeWheel(); removePromptOverlay(); root.removeAllViews();
+        cancelButtonHold();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View folderButton = prompt("switch_plus_96dpi", "Folder", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
@@ -267,9 +279,9 @@ public final class MainActivity extends Activity {
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
         LinearLayout controls = new LinearLayout(this); controls.setGravity(Gravity.CENTER); controls.setBackgroundColor(0xff222529);
-        controls.addView(prompt("switch_a_96dpi", "View", 15));
-        controls.addView(prompt("switch_x_96dpi", "Sort", 15));
-        controls.addView(prompt("switch_b_96dpi", "Back · hold to exit", 15));
+        controls.addView(prompt("switch_a_96dpi", "View · hold: image actions", 15));
+        controls.addView(prompt("switch_x_96dpi", "Sort · hold: view options", 15));
+        controls.addView(prompt("switch_b_96dpi", "Hold: exit", 15));
         layout.addView(controls, new LinearLayout.LayoutParams(-1, -2));
         if (photos.isEmpty()) { empty("No images here. Choose another folder.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
@@ -379,6 +391,7 @@ public final class MainActivity extends Activity {
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
+        addButtonPrompts(false);
     }
 
     private void displayPhoto() {
@@ -429,6 +442,7 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (radialOverlay != null) return handleWheelKey(event);
         if (settings) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
@@ -445,13 +459,26 @@ public final class MainActivity extends Activity {
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) beginExitHold();
-            if (event.getAction() == KeyEvent.ACTION_UP) { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); }
+            if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; removePromptOverlay(); return true; }
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); } }
+                else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); }
+            }
             return true;
         }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && key == KeyEvent.KEYCODE_BUTTON_X && viewing) { startButtonHold(key); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && photos.isEmpty() && (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER)) { pickFolder(); return true; }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && (key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_X)) { sort = (sort + 1) % SORTS.length; sortPhotos(); selected = Math.min(selected, Math.max(0, photos.size() - 1)); showGrid(); return true; }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && ((key == KeyEvent.KEYCODE_BUTTON_A && !viewing) || (key == KeyEvent.KEYCODE_BUTTON_X && !viewing)) && event.getRepeatCount() == 0) { startButtonHold(key); return true; }
+        if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) && heldButton == key) {
+            boolean held = longPressTriggered;
+            cancelButtonHold();
+            if (!held && !viewing && key == KeyEvent.KEYCODE_BUTTON_A) { if (grid == null || photos.isEmpty()) pickFolder(); else { int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); } }
+            if (!held && !viewing && key == KeyEvent.KEYCODE_BUTTON_X) { sort = (sort + 1) % SORTS.length; sortPhotos(); selected = Math.min(selected, Math.max(0, photos.size() - 1)); showGrid(); }
+            if (!held && viewing && key == KeyEvent.KEYCODE_BUTTON_B) showGrid();
+            return true;
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN && viewing && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) { selected = Math.floorMod(selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), photos.size()); displayPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_BUTTON_A)) { if (grid == null || photos.isEmpty()) { pickFolder(); return true; } int focused = grid.getSelectedItemPosition(); if (focused >= 0) selected = focused; openPhoto(); return true; }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
@@ -470,6 +497,50 @@ public final class MainActivity extends Activity {
         }
         return super.dispatchKeyEvent(event);
     }
+
+    private void startButtonHold(int key) {
+        if (heldButton != KeyEvent.KEYCODE_UNKNOWN) return;
+        heldButton = key; heldButtonAt = android.os.SystemClock.uptimeMillis(); longPressTriggered = false;
+        addButtonPrompts(true);
+        if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+            exitRunnable = new Runnable() { @Override public void run() { int p = (int)(android.os.SystemClock.uptimeMillis() - heldButtonAt); if (exitProgress != null) exitProgress.setProgress(Math.min(p, EXIT_HOLD_DURATION_MS)); if (p >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
+            exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(EXIT_HOLD_DURATION_MS); root.addView(exitProgress, new FrameLayout.LayoutParams(-1, dp(7), Gravity.BOTTOM)); handler.post(exitRunnable);
+        } else {
+            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{3, 4, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) { longPressTriggered = true; showDeleteConfirmation(); } };
+            handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
+            handler.postDelayed(() -> { if (heldButton == key && !longPressTriggered) addButtonPrompts(true); }, HOLD_HINT_DELAY_MS);
+        }
+    }
+
+    private void cancelButtonHold() { if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable); longPressRunnable = null; heldButton = KeyEvent.KEYCODE_UNKNOWN; cancelExitHold(); removePromptOverlay(); }
+    private String imageSizeLabel() { return new String[]{"Small", "Big", "List"}[imageSizeMode]; }
+    private void addButtonPrompts(boolean holding) { removePromptOverlay(); if (root == null || viewing && !holding) return; LinearLayout panel = new LinearLayout(this); panel.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); panel.setOrientation(LinearLayout.VERTICAL); if (!viewing) { panel.addView(prompt("switch_a_96dpi", heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Image actions" : "View", 13)); panel.addView(prompt("switch_x_96dpi", heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? "View options" : "Sort", 13)); } panel.addView(prompt("switch_b_96dpi", heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Gallery" : "Exit"), 13)); FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.BOTTOM); panel.setBackgroundColor(0xaa222529); root.addView(panel, lp); promptOverlay = panel; }
+    private void removePromptOverlay() { if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
+
+    private void showWheel(String title, String[] labels, int[] actions) {
+        removePromptOverlay();
+        FrameLayout overlay = new FrameLayout(this); overlay.setBackgroundColor(0x99000000); activeWheelActions = actions;
+        TextView center = label(title + "\n↑  " + labels[0] + "\n↓  " + labels[1] + "\n←  " + labels[2] + "    →  " + labels[3] + "\nRelease to close", 22); center.setBackgroundColor(0xff272b30); center.setFocusable(true); overlay.addView(center, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1)); radialOverlay = overlay;
+    }
+    private boolean handleWheelKey(KeyEvent e) {
+        if (e.getAction() == KeyEvent.ACTION_UP && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; removePromptOverlay(); return true; }
+        if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
+        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); return true; }
+        int index = direction == KeyEvent.KEYCODE_DPAD_UP ? 0 : direction == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : direction == KeyEvent.KEYCODE_DPAD_LEFT ? 2 : direction == KeyEvent.KEYCODE_DPAD_RIGHT ? 3 : -1;
+        if (index < 0) return true;
+        int action = activeWheelActions == null ? 0 : activeWheelActions[index];
+        if (heldButton == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
+            if (action == 3) { sort = (sort + 1) % SORTS.length; sortPhotos(); }
+            if (action == 4) imageSizeMode = (imageSizeMode + 1) % 3;
+            showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{3,4,0,0});
+        } else { closeWheel(); if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later"); }
+        return true;
+    }
+    private void closeWheel() { if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay); radialOverlay = null; activeWheelActions = null; }
+    private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
+    private void showDeleteConfirmation() { if (photos.isEmpty()) return; android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this).setMessage("Delete this image?").setPositiveButton("A · YES", (d,w) -> deleteCurrentPhoto()).setNegativeButton("B · NO", (d,w) -> {}).create(); dialog.setOnShowListener(d -> { dialog.getButton(-1).setText("A · YES"); dialog.getButton(-2).setText("B · NO"); }); dialog.show(); }
+    private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
     private void beginExitHold() {
         if (exitRunnable != null) return;
