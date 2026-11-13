@@ -555,36 +555,50 @@ public final class MainActivity extends Activity {
         removePromptOverlay();
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
-        cluster.setPadding(dp(10), dp(6), dp(10), dp(6));
-        cluster.setBackgroundColor(0xaa222529);
+        cluster.setBackgroundColor(0x99000000);
         String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Image actions" : (viewing ? "" : "View");
         String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
-        String y = heldButton == KeyEvent.KEYCODE_BUTTON_Y && holding ? "View options" : "";
+        String y = "";
         String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Gallery" : "Hold to exit");
-        addClusterButton(cluster, "switch_x_96dpi", x, Gravity.TOP | Gravity.CENTER_HORIZONTAL, false);
-        addClusterButton(cluster, "switch_y_96dpi", y, Gravity.CENTER_VERTICAL | Gravity.LEFT, false);
-        addClusterButton(cluster, "switch_a_96dpi", a, Gravity.CENTER_VERTICAL | Gravity.RIGHT, true);
-        addClusterButton(cluster, "switch_b_96dpi", b, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, false);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(220), dp(146), Gravity.RIGHT | Gravity.BOTTOM);
+        int diameter = dp(36);
+        int centerX = dp(66), centerY = dp(66);
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(45), diameter, false, Gravity.BOTTOM);
+        addClusterButton(cluster, "switch_y_96dpi", y, centerX - dp(45), centerY, diameter, true, Gravity.CENTER_VERTICAL);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(45), centerY, diameter, false, Gravity.CENTER_VERTICAL);
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(45), diameter, false, Gravity.TOP);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(280), dp(160), Gravity.RIGHT | Gravity.BOTTOM);
         root.addView(cluster, lp);
         promptOverlay = cluster;
     }
-    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int gravity, boolean captionBeforeIcon) {
-        LinearLayout item = new LinearLayout(this);
-        item.setGravity(Gravity.CENTER);
-        boolean centerRow = gravity == (Gravity.TOP | Gravity.CENTER_HORIZONTAL) || gravity == (Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        item.setOrientation(centerRow || gravity == (Gravity.CENTER_VERTICAL | Gravity.RIGHT) ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, boolean captionBeforeIcon, int captionGravity) {
         ImageView buttonIcon = icon(iconName);
-        TextView text = null;
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter);
+        iconParams.leftMargin = cx - diameter / 2;
+        iconParams.topMargin = cy - diameter / 2;
+        cluster.addView(buttonIcon, iconParams);
         if (!caption.isEmpty()) {
-            text = label(caption, 12);
-            text.setPadding(dp(3), 0, dp(3), 0);
+            TextView text = label(caption, 12);
+            text.setPadding(dp(4), dp(2), dp(4), dp(2));
+            text.setBackgroundColor(0xcc111315);
+            int textWidth = dp(106);
+            FrameLayout.LayoutParams textParams;
+            if (captionGravity == Gravity.BOTTOM) {
+                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+                textParams.bottomMargin = dp(3);
+            } else if (captionGravity == Gravity.TOP) {
+                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.CENTER_HORIZONTAL | Gravity.TOP);
+                textParams.topMargin = dp(3);
+            } else if (captionBeforeIcon) {
+                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.LEFT | Gravity.TOP);
+                textParams.leftMargin = dp(2);
+                textParams.topMargin = cy - dp(14);
+            } else {
+                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.LEFT | Gravity.TOP);
+                textParams.leftMargin = cx + diameter / 2 + dp(2);
+                textParams.topMargin = cy - dp(14);
+            }
+            cluster.addView(text, textParams);
         }
-        if (captionBeforeIcon && text != null) item.addView(text);
-        item.addView(buttonIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
-        if (!captionBeforeIcon && text != null) item.addView(text);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, gravity);
-        cluster.addView(item, params);
     }
     private void removePromptOverlay() { if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
 
