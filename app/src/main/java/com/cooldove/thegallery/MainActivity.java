@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -19,7 +21,6 @@ import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.InputStream;
@@ -77,12 +78,12 @@ public final class MainActivity extends Activity {
     private ImageView incomingImage;
     private int photoTransition;
     private Runnable photoExitRunnable;
-    private ProgressBar exitProgress;
-    private TextView exitHint;
     private Runnable exitRunnable;
-    private Runnable exitHintRunnable;
     private View promptOverlay;
     private View radialOverlay;
+    private HoldRing holdRing;
+    private Runnable holdRingTick;
+    private long holdRingDuration = LONG_PRESS_MS;
     private int heldButton = KeyEvent.KEYCODE_UNKNOWN;
     private long heldButtonAt;
     private boolean longPressTriggered;
@@ -269,8 +270,7 @@ public final class MainActivity extends Activity {
         cancelButtonHold();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
-        View folderButton = prompt("switch_plus_96dpi", "Folder", 18); folderButton.setOnClickListener(v -> pickFolder()); bar.addView(folderButton);
-        View settingsButton = prompt("switch_start_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
+        View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
         status = null;
         TextView summary = label(SORTS[sort] + "  ·  " + photos.size() + " images", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
@@ -465,18 +465,20 @@ public final class MainActivity extends Activity {
                 cancelButtonHold();
                 if (!wasLongPress && viewing) showGrid();
                 else if (!wasLongPress && folder == null) pickFolder();
+                else if (!wasLongPress) addButtonPrompts(false);
                 return true;
             }
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == key && radialOverlay != null) { closeWheel(); boolean wasLongPress = longPressTriggered; heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (!wasLongPress && viewing) showGrid(); else addButtonPrompts(false); return true; }
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !settings) startButtonHold(key);
             if (event.getAction() == KeyEvent.ACTION_UP) {
-                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); } }
-                else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); }
+                if (heldButton == key) { boolean held = longPressTriggered; cancelButtonHold(); if (!held) { if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); } }
+                else { cancelExitHold(); if (settings) closeSettings(); else if (viewing) showGrid(); else if (folder == null) pickFolder(); else addButtonPrompts(false); }
             }
             return true;
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
-        if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_BUTTON_Y) {
+        if (key == KeyEvent.KEYCODE_BUTTON_Y) return true;
+        if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (event.getRepeatCount() == 0) startButtonHold(key);
                 return true;
@@ -485,6 +487,7 @@ public final class MainActivity extends Activity {
                 boolean wasLongPress = longPressTriggered;
                 cancelButtonHold();
                 if (!wasLongPress) performFaceButtonShortPress(key);
+                if (!viewing) addButtonPrompts(false);
                 return true;
             }
             return true;
@@ -540,10 +543,10 @@ public final class MainActivity extends Activity {
         heldButton = key; heldButtonAt = android.os.SystemClock.uptimeMillis(); longPressTriggered = false;
         addButtonPrompts(true);
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-            exitRunnable = new Runnable() { @Override public void run() { int p = (int)(android.os.SystemClock.uptimeMillis() - heldButtonAt); if (exitProgress != null) exitProgress.setProgress(Math.min(p, EXIT_HOLD_DURATION_MS)); if (p >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
-            exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(EXIT_HOLD_DURATION_MS); root.addView(exitProgress, new FrameLayout.LayoutParams(-1, dp(7), Gravity.BOTTOM)); handler.post(exitRunnable);
+            exitRunnable = new Runnable() { @Override public void run() { if (android.os.SystemClock.uptimeMillis() - heldButtonAt >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
+            handler.post(exitRunnable);
         } else {
-            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if ((key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_BUTTON_Y) && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
+            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
             handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
             handler.postDelayed(() -> { if (heldButton == key && !longPressTriggered) addButtonPrompts(true); }, HOLD_HINT_DELAY_MS);
         }
@@ -555,53 +558,107 @@ public final class MainActivity extends Activity {
         removePromptOverlay();
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
-        cluster.setBackgroundColor(0x99000000);
+        // cluster.setBackgroundColor(0x99000000);
         String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "View");
         String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
-        String y = "";
+        String y = viewing ? "" : "Select";
         String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
         int diameter = dp(26);
-        int centerX = dp(66), centerY = dp(66);
         int interval = 30;
-        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, false, Gravity.BOTTOM);
-        addClusterButton(cluster, "switch_y_96dpi", y, centerX - dp(interval), centerY, diameter, true, Gravity.CENTER_VERTICAL);
-        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, false, Gravity.CENTER_VERTICAL);
-        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, false, Gravity.TOP);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(280), dp(160), Gravity.RIGHT | Gravity.BOTTOM);
+        int panelWidth = dp(250), panelHeight = dp(124);
+        int centerX = dp(107), centerY = panelHeight / 2;
+        boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
+        boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
+        boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0);
+        addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0);
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(panelWidth, panelHeight, Gravity.RIGHT | Gravity.BOTTOM);
         root.addView(cluster, lp);
         promptOverlay = cluster;
     }
-    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, boolean captionBeforeIcon, int captionGravity) {
+    /** captionSide marks the side of the button icon the caption is placed on: TOP = above, BOTTOM = below, LEFT = start, RIGHT = end. holdRingDuration > 0 draws a hold ring around this same icon. */
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
         ImageView buttonIcon = icon(iconName);
-        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter);
+        FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
         iconParams.leftMargin = cx - diameter / 2;
         iconParams.topMargin = cy - diameter / 2;
         cluster.addView(buttonIcon, iconParams);
-        if (!caption.isEmpty()) {
-            TextView text = label(caption, 12);
-            text.setPadding(dp(4), dp(2), dp(4), dp(2));
-            text.setBackgroundColor(0xcc111315);
-            int textWidth = dp(106);
-            FrameLayout.LayoutParams textParams;
-            if (captionGravity == Gravity.BOTTOM) {
-                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
-                textParams.bottomMargin = dp(3);
-            } else if (captionGravity == Gravity.TOP) {
-                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.CENTER_HORIZONTAL | Gravity.TOP);
-                textParams.topMargin = dp(3);
-            } else if (captionBeforeIcon) {
-                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.LEFT | Gravity.TOP);
-                textParams.leftMargin = dp(2);
-                textParams.topMargin = cy - dp(14);
-            } else {
-                textParams = new FrameLayout.LayoutParams(textWidth, -2, Gravity.LEFT | Gravity.TOP);
-                textParams.leftMargin = cx + diameter / 2 + dp(2);
-                textParams.topMargin = cy - dp(14);
+        if (holdRingDuration > 0) addHoldRing(cluster, cx, cy, diameter + dp(10), holdRingDuration);
+        if (caption.isEmpty()) return;
+
+        TextView text = label(caption, 12);
+        text.setPadding(dp(4), dp(2), dp(4), dp(2));
+        text.setBackgroundColor(0xcc111315);
+        int unspecified = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+        text.measure(unspecified, unspecified);
+        int textWidth = text.getMeasuredWidth();
+        int textHeight = text.getMeasuredHeight();
+        int gap = dp(3);
+        int radius = diameter / 2 + gap;
+        int textCenterX = cx;
+        int textCenterY = cy;
+        if (captionSide == Gravity.TOP) textCenterY = cy - radius - textHeight / 2;
+        else if (captionSide == Gravity.BOTTOM) textCenterY = cy + radius + textHeight / 2;
+        else if (captionSide == Gravity.LEFT) textCenterX = cx - radius - textWidth / 2;
+        else if (captionSide == Gravity.RIGHT) textCenterX = cx + radius + textWidth / 2;
+        FrameLayout.LayoutParams textParams = new FrameLayout.LayoutParams(textWidth, textHeight, Gravity.TOP | Gravity.LEFT);
+        textParams.leftMargin = textCenterX - textWidth / 2;
+        textParams.topMargin = textCenterY - textHeight / 2;
+        cluster.addView(text, textParams);
+    }
+    private void addHoldRing(FrameLayout cluster, int cx, int cy, int size, long duration) {
+        HoldRing ring = new HoldRing();
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size, Gravity.TOP | Gravity.LEFT);
+        params.leftMargin = cx - size / 2;
+        params.topMargin = cy - size / 2;
+        cluster.addView(ring, params);
+        stopHoldRingTicker();
+        holdRing = ring;
+        holdRingDuration = duration;
+        holdRingTick = new Runnable() {
+            @Override public void run() {
+                if (holdRing == null) { holdRingTick = null; return; }
+                long elapsed = android.os.SystemClock.uptimeMillis() - heldButtonAt;
+                holdRing.setProgress(Math.min(1f, elapsed / (float) holdRingDuration));
+                if (elapsed < holdRingDuration) handler.postDelayed(this, 16);
             }
-            cluster.addView(text, textParams);
+        };
+        handler.post(holdRingTick);
+    }
+    private void stopHoldRingTicker() {
+        if (holdRingTick != null) handler.removeCallbacks(holdRingTick);
+        holdRingTick = null;
+        holdRing = null;
+    }
+    private final class HoldRing extends View {
+        private final Paint trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint progressPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float progress;
+        HoldRing() {
+            super(MainActivity.this);
+            trackPaint.setStyle(Paint.Style.STROKE);
+            trackPaint.setStrokeWidth(dp(3));
+            trackPaint.setColor(0x40ffffff);
+            progressPaint.setStyle(Paint.Style.STROKE);
+            progressPaint.setStrokeWidth(dp(3));
+            progressPaint.setStrokeCap(Paint.Cap.ROUND);
+            progressPaint.setColor(0xffffffff);
+        }
+        void setProgress(float value) {
+            if (progress == value) return;
+            progress = value;
+            invalidate();
+        }
+        @Override protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float radius = (Math.min(getWidth(), getHeight()) - dp(3)) / 2f;
+            canvas.drawCircle(cx, cy, radius, trackPaint);
+            if (progress > 0f) canvas.drawArc(cx - radius, cy - radius, cx + radius, cy + radius, -90f, 360f * progress, false, progressPaint);
         }
     }
-    private void removePromptOverlay() { if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
+    private void removePromptOverlay() { stopHoldRingTicker(); if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
 
     private void showWheel(String title, String[] labels, int[] actions) {
         showWheel(title, labels, actions, new int[4]);
@@ -663,22 +720,6 @@ public final class MainActivity extends Activity {
     private void showDeleteConfirmation() { if (photos.isEmpty()) return; android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this).setMessage("Delete this image?").setPositiveButton("A · YES", (d,w) -> deleteCurrentPhoto()).setNegativeButton("B · NO", (d,w) -> {}).create(); dialog.setOnShowListener(d -> { dialog.getButton(-1).setText("A · YES"); dialog.getButton(-2).setText("B · NO"); }); dialog.show(); }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
-    private void beginExitHold() {
-        if (exitRunnable != null) return;
-        exitProgress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); exitProgress.setMax(EXIT_HOLD_DURATION_MS); exitProgress.setProgress(0);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(8), Gravity.BOTTOM); root.addView(exitProgress, lp);
-        exitHint = label("长按B退出应用", 16);
-        exitHint.setBackgroundColor(0xaa222529);
-        exitHint.setVisibility(View.GONE);
-        FrameLayout.LayoutParams hintParams = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-        hintParams.bottomMargin = dp(8);
-        root.addView(exitHint, hintParams);
-        exitHintRunnable = () -> { if (exitHint != null) exitHint.setVisibility(View.VISIBLE); };
-        handler.postDelayed(exitHintRunnable, 300);
-        long started = android.os.SystemClock.uptimeMillis();
-        exitRunnable = new Runnable() { @Override public void run() { int progress = (int)(android.os.SystemClock.uptimeMillis() - started); if (exitProgress != null) exitProgress.setProgress(Math.min(progress, EXIT_HOLD_DURATION_MS)); if (progress >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
-        handler.post(exitRunnable);
-    }
-    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); if (exitHintRunnable != null) handler.removeCallbacks(exitHintRunnable); exitRunnable = null; exitHintRunnable = null; if (exitProgress != null) root.removeView(exitProgress); if (exitHint != null) root.removeView(exitHint); exitProgress = null; exitHint = null; }
+    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
     @Override protected void onDestroy() { super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
