@@ -157,6 +157,10 @@ public final class MainActivity extends Activity {
             } else {
                 sources.clear(); sources.add(folder); persistSources(); scan();
             }
+        } else if (request == PICK_SOURCE && settings) {
+            // The document picker may finish without a selection; rebuild the settings
+            // screen either way so its controller focus and Back control are restored.
+            showSettings();
         } else if (request == PICK_FOLDER && folder == null) empty("No folder selected", true);
     }
 
@@ -495,7 +499,14 @@ public final class MainActivity extends Activity {
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
                 }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
+                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) closeSettings();
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) {
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) closeSettings();
+                    return true;
+                }
             }
             return true;
         }
