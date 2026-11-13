@@ -845,7 +845,7 @@ public final class MainActivity extends Activity {
             shareServer = server;
             String address = localAddress();
             if (address == null) throw new java.io.IOException("No LAN address");
-            shareUrl = "http://" + address + ":" + server.getLocalPort() + "/" + token;
+            shareUrl = "http://" + address + ":" + server.getLocalPort();
             showShareUi(photo, shareUrl);
             shareThread = new Thread(() -> serveShare(server, token, photo), "gallery-share");
             shareThread.start();
@@ -868,7 +868,7 @@ public final class MainActivity extends Activity {
                     if (request.size() > 4096) break;
                 }
                 String first = request.toString("US-ASCII").split("\\r?\\n", 2)[0];
-                String expected = "GET /" + token + " ";
+                String expected = "GET / ";
                 OutputStream out = client.getOutputStream();
                 if (!first.startsWith(expected)) {
                     out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
@@ -894,12 +894,11 @@ public final class MainActivity extends Activity {
     }
     private void showShareUi(Photo photo, String url) {
         viewing = false; sharing = true; closeWheel(); removePromptOverlay(); root.removeAllViews(); root.setBackgroundColor(0xff181a1d);
-        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(20), dp(24), dp(20));
-        TextView title = label("Download image on your computer", 25); content.addView(title);
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(10), dp(24), dp(148));
         TextView filename = label(photo.name, 18); filename.setSingleLine(true); content.addView(filename);
-        try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 320, 320); Bitmap qr = Bitmap.createBitmap(320, 320, Bitmap.Config.RGB_565); for (int y = 0; y < 320; y++) for (int x = 0; x < 320; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(260), dp(260)); qrParams.topMargin = dp(10); content.addView(qrView, qrParams); } catch (Exception ignored) { }
-        TextView path = label(url, 17); path.setTextIsSelectable(true); path.setPadding(dp(16), dp(10), dp(16), dp(10)); content.addView(path);
-        TextView hint = label("Open this address in a browser on the same Wi-Fi network", 16); content.addView(hint);
+        try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240); Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565); for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); qrView.setScaleType(ImageView.ScaleType.FIT_CENTER); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(190), dp(190)); qrParams.topMargin = dp(6); qrParams.bottomMargin = dp(6); content.addView(qrView, qrParams); } catch (Exception ignored) { }
+        TextView path = label(url, 16); path.setTextIsSelectable(true); path.setSingleLine(true); path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); path.setPadding(dp(12), dp(6), dp(12), dp(6)); content.addView(path);
+        TextView hint = label("Open on a computer on the same Wi-Fi network", 15); content.addView(hint);
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
         FrameLayout back = new FrameLayout(this); addClusterButton(back, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0); back.setOnClickListener(v -> closeShareScreen()); root.addView(back, clusterParams(Gravity.RIGHT));
     }
