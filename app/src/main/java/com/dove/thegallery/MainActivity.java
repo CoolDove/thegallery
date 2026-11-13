@@ -721,7 +721,7 @@ public final class MainActivity extends Activity {
         // notifyDataSetChanged/setNumColumns can rebind or relayout children after this
         // method returns. Apply the custom selection border once those children exist.
         grid.post(() -> {
-            if (grid == null || current != Screen.GALLERY) return;
+            if (grid == null || viewing) return;
             grid.setSelection(selected);
             updateGridHighlight();
         });
