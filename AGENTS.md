@@ -21,7 +21,7 @@ The Gallery is a local image gallery for Android handheld gaming devices. The pr
 
 ## Android and storage constraints
 
-- Application ID `com.cooldove.thegallery`; min SDK 28, compile/target SDK 35, Java 17, landscape orientation. Verify behavior on Android API 30 hardware when possible.
+- Application ID `com.dove.thegallery`; Android namespace and Java package remain `com.cooldove.thegallery`. Min SDK 28, compile/target SDK 35, Java 17, landscape orientation. Verify behavior on Android API 30 hardware when possible.
 - Use SAF and persisted URI grants for user-selected media. Do not add broad storage permissions.
 - Keep image enumeration and decoding off the UI thread. Keep thumbnail work bounded and avoid retaining full-resolution images in the grid.
 - The manifest currently declares `INTERNET` for the local sharing server. Do not describe the app as having no network-related functionality; do not add network access/features beyond the intentional local sharing flow without updating the product/security design.
