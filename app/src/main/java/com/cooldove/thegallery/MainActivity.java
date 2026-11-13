@@ -4,8 +4,11 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Bitmap;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -34,8 +37,23 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.NetworkInterface;
+import java.net.Inet4Address;
+import java.util.Enumeration;
+import java.security.SecureRandom;
+import java.util.Locale;
+import java.io.BufferedInputStream;
+import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.MultiFormatWriter;
+import com.google.zxing.common.BitMatrix;
 
 public final class MainActivity extends Activity {
+    private static final int SHARE_PORT = 8765;
+    private static final int SHARE_FALLBACK_PORTS = 20;
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
     private static final int EXIT_HOLD_DURATION_MS = 1000;
@@ -69,6 +87,12 @@ public final class MainActivity extends Activity {
     private Uri folder;
     private int selected, sort;
     private boolean viewing;
+    private boolean fastScrollTopChord;
+    private boolean fastScrollBottomChord;
+    private boolean sharing;
+    private ServerSocket shareServer;
+    private Thread shareThread;
+    private String shareUrl;
     private boolean settings;
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
@@ -162,6 +186,10 @@ public final class MainActivity extends Activity {
             } else {
                 sources.clear(); sources.add(folder); persistSources(); scan();
             }
+        } else if (request == PICK_SOURCE && settings) {
+            // The document picker may finish without a selection; rebuild the settings
+            // screen either way so its controller focus and Back control are restored.
+            showSettings();
         } else if (request == PICK_FOLDER && folder == null) empty("No folder selected", true);
     }
 
@@ -490,10 +518,22 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
+        if (sharing) {
+            if (event.getAction() == KeyEvent.ACTION_UP && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)) { closeShareScreen(); return true; }
+            return true;
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             if (event.getRepeatCount() == 0) pressedKeys.add(key);
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
+        }
+        if (!viewing && grid != null && isDpadKey(key)) {
+            boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
+            boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
+            boolean changed = topChord != fastScrollTopChord || bottomChord != fastScrollBottomChord;
+            fastScrollTopChord = topChord;
+            fastScrollBottomChord = bottomChord;
+            if (changed) addButtonPrompts(topChord || bottomChord);
         }
         if (deleteOverlay != null) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -507,6 +547,11 @@ public final class MainActivity extends Activity {
         if (radialOverlay != null) {
             return handleWheelKey(event);
         }
+        if (heldButton != KeyEvent.KEYCODE_UNKNOWN && event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getRepeatCount() == 0 && isDpadKey(key)) {
+            showHeldButtonWheel();
+            return handleWheelKey(event);
+        }
         if (settings) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
@@ -518,9 +563,27 @@ public final class MainActivity extends Activity {
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
                 }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
+                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) closeSettings();
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) {
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) closeSettings();
+                    return true;
+                }
             }
             return true;
+        }
+        if (!viewing && grid != null && !photos.isEmpty()) {
+            boolean topChord = fastScrollTopChord;
+            boolean bottomChord = fastScrollBottomChord;
+            if ((topChord && key == KeyEvent.KEYCODE_BUTTON_X)
+                    || (bottomChord && key == KeyEvent.KEYCODE_BUTTON_B)) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    scrollGridToEdge(topChord, false);
+                }
+                return true;
+            }
         }
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_UP && heldButton == KeyEvent.KEYCODE_BUTTON_B && radialOverlay == null) {
@@ -541,7 +604,10 @@ public final class MainActivity extends Activity {
             }
             return true;
         }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) { if (settings) closeSettings(); else showSettings(); return true; }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU)) {
+            if (settings) closeSettings(); else { resetButtonHoldForUiChange(); showSettings(); }
+            return true;
+        }
         if (key == KeyEvent.KEYCODE_BUTTON_Y) return true;
         if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
@@ -608,6 +674,18 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void scrollGridToEdge(boolean top, boolean animate) {
+        if (grid == null || photos.isEmpty()) return;
+        selected = top ? 0 : photos.size() - 1;
+        grid.requestFocus();
+        if (animate) grid.smoothScrollToPosition(selected);
+        else {
+            grid.setSelection(selected);
+            grid.post(() -> { if (grid != null) grid.setSelection(selected); });
+        }
+        updateGridHighlight();
+    }
+
     private void applySortFromWheel() {
         String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
         sort = (sort + 1) % SORTS.length;
@@ -640,6 +718,14 @@ public final class MainActivity extends Activity {
         }
     }
 
+    /** Cancel any in-progress long press before changing UI state or presenting a modal UI. */
+    private void resetButtonHoldForUiChange() {
+        int canceledButton = heldButton;
+        cancelButtonHold();
+        longPressTriggered = false;
+        if (canceledButton != KeyEvent.KEYCODE_UNKNOWN) swallowedKeyUps.add(canceledButton);
+    }
+
     /** True once the press has lasted long enough that short-press behavior must be suppressed. */
     private boolean holdPassedHint() {
         return heldButton != KeyEvent.KEYCODE_UNKNOWN && android.os.SystemClock.uptimeMillis() - heldButtonAt >= HOLD_HINT_DELAY_MS;
@@ -652,20 +738,24 @@ public final class MainActivity extends Activity {
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
         // cluster.setBackgroundColor(0x99000000);
-        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
-        String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
-        String y = viewing ? "" : "Select";
-        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
+        boolean fastTop = holding && fastScrollTopChord;
+        boolean fastBottom = holding && fastScrollBottomChord;
+        String a = fastTop || fastBottom ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
+        String x = fastTop ? "To Top" : fastBottom ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
+        String y = viewing || fastTop || fastBottom ? "" : "Select";
+        String b = fastBottom ? "To Bottom" : fastTop ? "" : heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
         int diameter = dp(CLUSTER_BUTTON_DP);
         int interval = CLUSTER_INTERVAL_DP;
         int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
         boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
         boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
         boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
-        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0);
+        Runnable xPromptAction = !viewing ? () -> scrollGridToEdge(true, false) : null;
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0, xPromptAction);
         addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
-        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0);
-        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0, null);
+        Runnable bPromptAction = !viewing ? () -> scrollGridToEdge(false, false) : null;
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0, bPromptAction);
         root.addView(cluster, clusterParams(Gravity.RIGHT));
         promptOverlay = cluster;
     }
@@ -675,13 +765,24 @@ public final class MainActivity extends Activity {
     }
     /** captionSide marks the side of the button icon the caption is placed on: TOP = above, BOTTOM = below, LEFT = start, RIGHT = end. holdRingDuration > 0 draws a hold ring around this same icon. */
     private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
-        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration);
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration, null);
     }
     private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
+        addClusterButton(cluster, buttonIcon, caption, cx, cy, diameter, captionSide, holdRingDuration, null);
+    }
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration, Runnable action) {
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration, action);
+    }
+    private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration, Runnable action) {
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
         iconParams.leftMargin = cx - diameter / 2;
         iconParams.topMargin = cy - diameter / 2;
         cluster.addView(buttonIcon, iconParams);
+        if (action != null) {
+            buttonIcon.setClickable(true);
+            buttonIcon.setContentDescription(caption);
+            buttonIcon.setOnClickListener(v -> action.run());
+        }
         if (holdRingDuration > 0) addHoldRing(cluster, cx, cy, diameter + dp(10), holdRingDuration);
         if (caption.isEmpty()) return;
 
@@ -800,13 +901,12 @@ public final class MainActivity extends Activity {
         if (toggle != 0) {
             if (toggle == 2) refreshDisplayModeInGrid();
             refreshWheelToggleLabel();
-        } else {
+        } else if (action != 0) {
             closeWheel();
-            if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
+            if (action == 1) showDeleteConfirmation(); else if (action == 2) showShareScreen();
         }
         return true;
     }
-
     private void refreshDisplayModeInGrid() {
         if (grid == null) return;
         gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(displayMode == 2 ? 300 : 210));
@@ -834,6 +934,21 @@ public final class MainActivity extends Activity {
         } else if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) updateWheelLabel(group.getChildAt(i), value);
+        }
+    }
+
+    private static boolean isDpadKey(int key) {
+        return key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
+                || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+    private void showHeldButtonWheel() {
+        longPressTriggered = true;
+        if (longPressRunnable != null) handler.removeCallbacks(longPressRunnable);
+        longPressRunnable = null;
+        if (heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing) {
+            showWheel(new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0});
+        } else if (heldButton == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
+            showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0});
         }
     }
     private static final int DPAD_UP = 0, DPAD_DOWN = 1, DPAD_LEFT = 2, DPAD_RIGHT = 3;
@@ -889,12 +1004,133 @@ public final class MainActivity extends Activity {
         radialOverlay = null;
     }
     private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
+    private void showShareScreen() {
+        if (photos.isEmpty()) return;
+        stopShareServer();
+        final String token = randomToken();
+        final Photo photo = photos.get(selected);
+        try {
+            ServerSocket server = openShareServer();
+            server.setSoTimeout(0);
+            shareServer = server;
+            String address = localAddress();
+            if (address == null) throw new java.io.IOException("No LAN address");
+            shareUrl = "http://" + address + ":" + server.getLocalPort();
+            showShareUi(photo, shareUrl);
+            shareThread = new Thread(() -> serveShare(server, token, photo), "gallery-share");
+            shareThread.start();
+        } catch (Exception e) {
+            showPlaceholder("Unable to start local sharing");
+            showGrid();
+        }
+    }
+    private void shareListenerStopped() { if (sharing) closeShareScreen(); shareServer = null; }
+    private void serveShare(ServerSocket server, String token, Photo photo) {
+        while (!server.isClosed()) {
+            try (Socket client = server.accept()) {
+                client.setSoTimeout(10000);
+                BufferedInputStream in = new BufferedInputStream(client.getInputStream());
+                ByteArrayOutputStream request = new ByteArrayOutputStream();
+                int b, matched = 0;
+                while ((b = in.read()) != -1) {
+                    request.write(b);
+                    if (b == '\n') { if (++matched >= 2) break; } else if (b != '\r') matched = 0;
+                    if (request.size() > 4096) break;
+                }
+                String first = request.toString("US-ASCII").split("\\r?\\n", 2)[0];
+                String expected = "GET / ";
+                OutputStream out = client.getOutputStream();
+                if (!first.startsWith(expected)) {
+                    out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
+                } else {
+                    String mime = getContentResolver().getType(photo.uri);
+                    if (mime == null || !mime.startsWith("image/")) mime = "application/octet-stream";
+                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Disposition: attachment; filename=\"" + safeFilename(photo.name) + "\"\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
+                    try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                        if (image != null) { byte[] buffer = new byte[32768]; int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) out.write(buffer, 0, count); }
+                    }
+                    out.flush();
+                }
+            } catch (java.net.SocketException e) { break; }
+            catch (Exception ignored) { }
+        }
+        runOnUiThread(this::shareListenerStopped);
+    }
+    private ServerSocket openShareServer() throws java.io.IOException {
+        java.net.InetAddress bindAddress = java.net.InetAddress.getByName("0.0.0.0");
+        java.io.IOException lastError = null;
+        for (int offset = 0; offset <= SHARE_FALLBACK_PORTS; offset++) {
+            try { return new ServerSocket(SHARE_PORT + offset, 1, bindAddress); }
+            catch (java.io.IOException e) { lastError = e; }
+        }
+        throw lastError == null ? new java.io.IOException("No available sharing port") : lastError;
+    }
+    private String safeFilename(String name) { return (name == null ? "image" : name).replaceAll("[^A-Za-z0-9._-]", "_"); }
+    private String randomToken() { byte[] bytes = new byte[16]; new SecureRandom().nextBytes(bytes); StringBuilder s = new StringBuilder(); for (byte b : bytes) s.append(String.format(Locale.ROOT, "%02x", b & 255)); return s.toString(); }
+    private String localAddress() {
+        try { Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces(); while (interfaces.hasMoreElements()) { NetworkInterface ni = interfaces.nextElement(); if (!ni.isUp() || ni.isLoopback()) continue; Enumeration<java.net.InetAddress> addresses = ni.getInetAddresses(); while (addresses.hasMoreElements()) { java.net.InetAddress a = addresses.nextElement(); if (a instanceof Inet4Address && !a.isLoopbackAddress() && !a.isLinkLocalAddress()) return a.getHostAddress(); } } } catch (Exception ignored) { }
+        return null;
+    }
+    private Bitmap gaussianBlur(Bitmap source) {
+        int width = Math.max(1, Math.round(source.getWidth() * 0.7f));
+        int height = Math.max(1, Math.round(source.getHeight() * 0.7f));
+        Bitmap scaled = Bitmap.createScaledBitmap(source, width, height, true);
+        if (scaled != source) source.recycle();
+        int[] pixels = new int[width * height];
+        int[] temp = new int[pixels.length];
+        scaled.getPixels(pixels, 0, width, 0, 0, width, height);
+        final int radius = 5;
+        final float sigma = 2.2f;
+        float[] weights = new float[radius * 2 + 1];
+        float sum = 0;
+        for (int i = -radius; i <= radius; i++) { float w = (float)Math.exp(-(i * i) / (2f * sigma * sigma)); weights[i + radius] = w; sum += w; }
+        for (int i = 0; i < weights.length; i++) weights[i] /= sum;
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            float a=0,r=0,g=0,b=0;
+            for (int k=-radius;k<=radius;k++) { int c=pixels[y*width+Math.max(0,Math.min(width-1,x+k))]; float w=weights[k+radius]; a+=((c>>>24)&255)*w; r+=((c>>>16)&255)*w; g+=((c>>>8)&255)*w; b+=(c&255)*w; }
+            temp[y*width+x]=((int)a<<24)|((int)r<<16)|((int)g<<8)|(int)b;
+        }
+        for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            float a=0,r=0,g=0,b=0;
+            for (int k=-radius;k<=radius;k++) { int c=temp[Math.max(0,Math.min(height-1,y+k))*width+x]; float w=weights[k+radius]; a+=((c>>>24)&255)*w; r+=((c>>>16)&255)*w; g+=((c>>>8)&255)*w; b+=(c&255)*w; }
+            pixels[y*width+x]=((int)a<<24)|((int)r<<16)|((int)g<<8)|(int)b;
+        }
+        Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        result.setPixels(pixels, 0, width, 0, 0, width, height);
+        scaled.recycle();
+        return result;
+    }
+    private void showShareUi(Photo photo, String url) {
+        viewing = false; sharing = true; closeWheel(); removePromptOverlay(); root.removeAllViews(); root.setBackgroundColor(0xff181a1d);
+        ImageView background = new ImageView(this);
+        background.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.71f,0,0,0,0, 0,0.71f,0,0,0, 0,0,0.71f,0,0, 0,0,0,1,0})));
+        root.addView(background, new FrameLayout.LayoutParams(-1, -1));
+        loader.execute(() -> {
+            Bitmap source = decode(photo, 960);
+            Bitmap backdrop = source == null ? null : gaussianBlur(source);
+            if (backdrop != null) runOnUiThread(() -> { if (sharing && background.getParent() == root) background.setImageBitmap(backdrop); });
+        });
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0x33000000);
+        root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(10), dp(24), dp(148));
+        content.setBackgroundColor(0x22000000);
+        TextView filename = label(photo.name, 18); filename.setSingleLine(true); content.addView(filename);
+        try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240); Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565); for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); qrView.setScaleType(ImageView.ScaleType.FIT_CENTER); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(190), dp(190)); qrParams.topMargin = dp(6); qrParams.bottomMargin = dp(6); content.addView(qrView, qrParams); } catch (Exception ignored) { }
+        TextView path = label(url, 16); path.setTextIsSelectable(true); path.setSingleLine(true); path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); path.setPadding(dp(12), dp(6), dp(12), dp(6)); content.addView(path);
+        TextView hint = label("Open on a device on the same Wi-Fi network", 15); content.addView(hint);
+        root.addView(content, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout back = new FrameLayout(this); addClusterButton(back, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0); back.setOnClickListener(v -> closeShareScreen()); root.addView(back, clusterParams(Gravity.RIGHT));
+    }
+    private void closeShareScreen() { stopShareServer(); sharing = false; showGrid(); }
+    private void stopShareServer() { if (shareServer != null) { try { shareServer.close(); } catch (Exception ignored) { } shareServer = null; } shareUrl = null; }
     private void showDeleteConfirmation() {
         if (photos.isEmpty() || deleteOverlay != null) return;
         // The key that opened this confirm is usually still held; its release must not confirm.
-        cancelButtonHold();
         swallowedKeyUps.clear();
         swallowedKeyUps.addAll(pressedKeys);
+        resetButtonHoldForUiChange();
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         GradientDrawable panelBackground = new GradientDrawable();
@@ -953,5 +1189,5 @@ public final class MainActivity extends Activity {
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
     private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
-    @Override protected void onDestroy() { super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
+    @Override protected void onDestroy() { stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
