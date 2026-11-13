@@ -560,12 +560,13 @@ public final class MainActivity extends Activity {
         String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
         String y = "";
         String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
-        int diameter = dp(36);
+        int diameter = dp(26);
         int centerX = dp(66), centerY = dp(66);
-        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(45), diameter, false, Gravity.BOTTOM);
-        addClusterButton(cluster, "switch_y_96dpi", y, centerX - dp(45), centerY, diameter, true, Gravity.CENTER_VERTICAL);
-        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(45), centerY, diameter, false, Gravity.CENTER_VERTICAL);
-        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(45), diameter, false, Gravity.TOP);
+        int interval = 30;
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, false, Gravity.BOTTOM);
+        addClusterButton(cluster, "switch_y_96dpi", y, centerX - dp(interval), centerY, diameter, true, Gravity.CENTER_VERTICAL);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, false, Gravity.CENTER_VERTICAL);
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, false, Gravity.TOP);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(280), dp(160), Gravity.RIGHT | Gravity.BOTTOM);
         root.addView(cluster, lp);
         promptOverlay = cluster;
