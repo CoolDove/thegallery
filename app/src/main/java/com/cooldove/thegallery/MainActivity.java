@@ -30,6 +30,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.Comparator;
 import java.util.concurrent.ExecutorService;
@@ -94,6 +95,13 @@ public final class MainActivity extends Activity {
     private Thread shareThread;
     private String shareUrl;
     private boolean settings;
+    private boolean sourcesDirty;
+    private boolean scanInProgress;
+    private TextView refreshIndicator;
+    private long refreshGeneration;
+    private final HashMap<String, Integer> sourceFileCounts = new HashMap<>();
+    private boolean countQueryInProgress;
+    private Runnable directoryCountPoll;
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
     private int gridColumns = 1;
@@ -167,6 +175,7 @@ public final class MainActivity extends Activity {
     private TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(0xffffffff); v.setGravity(Gravity.CENTER); v.setPadding(20, 18, 20, 18); return v; }
 
     private void pickFolder() {
+        resetButtonHoldForUiChange();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         Uri current = folder;
         if (current != null && android.os.Build.VERSION.SDK_INT >= 26) intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, current);
@@ -180,11 +189,11 @@ public final class MainActivity extends Activity {
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             try { getContentResolver().takePersistableUriPermission(folder, flags); } catch (SecurityException ignored) { }
             if (request == PICK_SOURCE) {
-                if (!sources.contains(folder)) sources.add(folder);
+                if (!sources.contains(folder)) { sources.add(folder); sourcesDirty = true; }
                 persistSources();
                 if (settings) showSettings();
             } else {
-                sources.clear(); sources.add(folder); persistSources(); scan();
+                sources.clear(); sources.add(folder); persistSources(); sourcesDirty = true; scan();
             }
         } else if (request == PICK_SOURCE && settings) {
             // The document picker may finish without a selection; rebuild the settings
@@ -194,12 +203,16 @@ public final class MainActivity extends Activity {
     }
 
     private void scan() {
-        root.removeAllViews(); photos.clear(); selected = 0;
-        empty("Loading images…", false);
+        if (scanInProgress) { sourcesDirty = true; return; }
+        scanInProgress = true;
+        long generation = ++refreshGeneration;
+        String selectedUri = selected >= 0 && selected < photos.size() ? photos.get(selected).uri.toString() : null;
+        updateRefreshIndicator(true);
+        ArrayList<Uri> scanSources = new ArrayList<>(sources);
         loader.execute(() -> {
             ArrayList<Photo> found = new ArrayList<>();
             try {
-                for (Uri source : new ArrayList<>(sources)) {
+                for (Uri source : scanSources) {
                     String id = DocumentsContract.getTreeDocumentId(source);
                     Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
                     try (android.database.Cursor c = getContentResolver().query(children, new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
@@ -210,10 +223,91 @@ public final class MainActivity extends Activity {
                     }
                 }
             } catch (Exception e) {
-                runOnUiThread(() -> empty("Folder unavailable. Choose another folder.", true)); return;
+                runOnUiThread(() -> {
+                    if (generation != refreshGeneration) return;
+                    scanInProgress = false; updateRefreshIndicator(false);
+                    if (photos.isEmpty()) empty("Folder unavailable. Choose another folder.", true);
+                    if (sourcesDirty) { sourcesDirty = false; scan(); }
+                }); return;
             }
-            photos.addAll(found);
-            runOnUiThread(() -> { sortPhotos(); if (settings) showSettings(); else showGrid(); });
+            runOnUiThread(() -> {
+                if (generation != refreshGeneration) return;
+                photos.clear(); photos.addAll(found);
+                sortPhotos();
+                selected = 0;
+                if (selectedUri != null) for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
+                scanInProgress = false;
+                sourcesDirty = false;
+                if (!settings && !viewing && grid != null) {
+                    ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+                    if (photos.isEmpty()) { grid = null; showGrid(); }
+                    else { selected = Math.min(selected, photos.size() - 1); grid.setSelection(selected); updateGridHighlight(); }
+                    refreshSummary();
+                } else if (!settings && !viewing && grid == null) showGrid();
+                updateRefreshIndicator(false);
+                if (sourcesDirty && !settings) { sourcesDirty = false; scan(); }
+            });
+        });
+    }
+
+    private void requestRefresh(boolean onlyIfDirty) {
+        if (settings || viewing) { sourcesDirty = true; return; }
+        if (root == null) return;
+        if (onlyIfDirty && !sourcesDirty) return;
+        if (scanInProgress) { sourcesDirty = true; return; }
+        sourcesDirty = false;
+        scan();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (root != null) requestRefresh(true);
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+    }
+
+    private void startDirectoryCountPolling() {
+        if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll);
+        directoryCountPoll = new Runnable() {
+            @Override public void run() {
+                if (!settings && !viewing && !sharing && !sources.isEmpty()) querySourceFileCounts(true);
+                handler.postDelayed(this, 1000);
+            }
+        };
+        handler.post(directoryCountPoll);
+    }
+
+    private void querySourceFileCounts(boolean refreshOnChange) {
+        if (countQueryInProgress) return;
+        countQueryInProgress = true;
+        ArrayList<Uri> snapshot = new ArrayList<>(sources);
+        loader.execute(() -> {
+            HashMap<String, Integer> queriedCounts = new HashMap<>();
+            for (Uri source : snapshot) {
+                try {
+                    String id = DocumentsContract.getTreeDocumentId(source);
+                    Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
+                    int count = 0;
+                    try (android.database.Cursor cursor = getContentResolver().query(children,
+                            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
+                        if (cursor != null) count = cursor.getCount();
+                    }
+                    queriedCounts.put(source.toString(), count);
+                } catch (Exception ignored) { }
+            }
+            runOnUiThread(() -> {
+                countQueryInProgress = false;
+                boolean changed = false;
+                for (Uri source : snapshot) {
+                    Integer count = queriedCounts.get(source.toString());
+                    if (count == null) continue;
+                    Integer previous = sourceFileCounts.put(source.toString(), count);
+                    if (previous != null && !previous.equals(count)) changed = true;
+                }
+                if (changed && refreshOnChange && !settings && !viewing && !sharing) requestRefresh(false);
+            });
         });
     }
 
@@ -235,6 +329,8 @@ public final class MainActivity extends Activity {
     }
 
     private void showSettings() {
+        resetButtonHoldForUiChange();
+        if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settings = true;
         settingsActions.clear();
         root.removeAllViews();
@@ -260,10 +356,10 @@ public final class MainActivity extends Activity {
             focusable(remove);
             settingsActions.add(remove);
             remove.setOnClickListener(v -> {
-                sources.remove(source);
+                sources.remove(source); sourcesDirty = true;
                 persistSources();
                 if (sources.isEmpty()) { photos.clear(); showGrid(); }
-                else { folder = sources.get(0); scan(); }
+                else folder = sources.get(0);
                 showSettings();
             });
             row.addView(remove);
@@ -303,23 +399,33 @@ public final class MainActivity extends Activity {
     }
 
     private void pickSource() {
+        resetButtonHoldForUiChange();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         if (folder != null && android.os.Build.VERSION.SDK_INT >= 26) intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, folder);
         startActivityForResult(intent, PICK_SOURCE);
     }
 
     private void closeSettings() {
+        resetButtonHoldForUiChange();
         settings = false;
-        if (photos.isEmpty()) scan(); else showGrid();
+        querySourceFileCounts(false);
+        startDirectoryCountPolling();
+        if (sourcesDirty || photos.isEmpty()) { sourcesDirty = false; scan(); } else showGrid();
     }
 
     private void showGrid() {
+        if (sourcesDirty && !scanInProgress) { sourcesDirty = false; scan(); return; }
         viewing = false; closeWheel(); removePromptOverlay(); deleteOverlay = null; swallowedKeyUps.clear(); root.removeAllViews();
         cancelButtonHold();
+        querySourceFileCounts(false);
+        startDirectoryCountPolling();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
         status = null;
+        refreshIndicator = label("Refreshing…", 13);
+        refreshIndicator.setVisibility(View.GONE);
+        bar.addView(refreshIndicator);
         summary = label("", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
         refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
@@ -340,6 +446,10 @@ public final class MainActivity extends Activity {
     private void refreshSummary() {
         if (summary == null) return;
         summary.setText(SORTS[sort] + " | " + photos.size() + " images");
+    }
+
+    private void updateRefreshIndicator(boolean refreshing) {
+        if (refreshIndicator != null) refreshIndicator.setVisibility(refreshing ? View.VISIBLE : View.GONE);
     }
 
     private void updateGridHighlight() {
@@ -553,6 +663,11 @@ public final class MainActivity extends Activity {
             return handleWheelKey(event);
         }
         if (settings) {
+            if ((key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK)
+                    && event.getAction() == KeyEvent.ACTION_UP) {
+                closeSettings();
+                return true;
+            }
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
                     settingsFocus = (settingsFocus + 1) % settingsActions.size(); focusSettingsAction(); return true;
@@ -562,10 +677,6 @@ public final class MainActivity extends Activity {
                 }
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
-                }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
-                    if (event.getAction() == KeyEvent.ACTION_UP) closeSettings();
-                    return true;
                 }
                 if (key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) {
                     if (event.getAction() == KeyEvent.ACTION_DOWN) closeSettings();
@@ -673,6 +784,7 @@ public final class MainActivity extends Activity {
             showGrid();
         }
     }
+    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
 
     private void scrollGridToEdge(boolean top, boolean animate) {
         if (grid == null || photos.isEmpty()) return;
@@ -1188,6 +1300,5 @@ public final class MainActivity extends Activity {
     }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
-    private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); exitRunnable = null; }
-    @Override protected void onDestroy() { stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
+    @Override protected void onDestroy() { if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
