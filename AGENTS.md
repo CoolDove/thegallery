@@ -32,6 +32,7 @@ The Gallery is an offline image viewer for Android handheld gaming devices, prim
 - Android SDK: min SDK 28 (Android 9), target SDK 35 (Android 15). Target hardware includes Android 11 / API 30; verify on API 30 devices. Distribution is outside Google Play, but target 35 is selected conservatively.
 - Native Android project using Java and Android Views to give direct control over controller focus and standard key events. Default Android controller key mappings are used; do not add remapping settings unless required later.
 - Controller-first input behavior is a top-level requirement. Keep focus visible and directional movement predictable; validate D-pad, A/B/X, and long-press behavior on target hardware.
+- For controller prompts, use the corresponding button icon rather than text labels such as `[B]`.
 - Thumbnail presentation and performance limits. Expect folders containing thousands of images; first phase should use a virtualized grid, asynchronous thumbnail loading, and a bounded in-memory thumbnail cache rather than loading full-resolution images into the grid.
 - Exact touch gestures and remaining controller mappings.
 

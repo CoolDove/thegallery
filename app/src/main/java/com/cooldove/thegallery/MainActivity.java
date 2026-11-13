@@ -197,7 +197,7 @@ public final class MainActivity extends Activity {
             name.setGravity(Gravity.CENTER_VERTICAL);
             name.setSingleLine(true);
             row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-            TextView remove = label("[−] Remove", 17);
+            TextView remove = label("Remove", 17);
             focusable(remove);
             settingsActions.add(remove);
             remove.setOnClickListener(v -> {
@@ -210,12 +210,12 @@ public final class MainActivity extends Activity {
             row.addView(remove);
             page.addView(row, new LinearLayout.LayoutParams(-1, -2));
         }
-        TextView add = label("[ + ] Add source", 20);
+        TextView add = label("Add source", 20);
         focusable(add);
         settingsActions.add(add);
         add.setOnClickListener(v -> pickSource());
         page.addView(add, new LinearLayout.LayoutParams(-1, -2));
-        TextView back = label("[ B ] Back to gallery", 18);
+        View back = prompt("switch_b_96dpi", "Back to gallery", 18);
         focusable(back);
         settingsActions.add(back);
         back.setOnClickListener(v -> closeSettings());
