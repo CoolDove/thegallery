@@ -195,6 +195,7 @@ final class GalleryController implements ScreenController {
     }
 
     private void openWheel(int heldKey) {
+        interaction.completeHoldProgress();
         HintPanel panel = HintPanel.wheel();
         if (heldKey == KeyEvent.KEYCODE_BUTTON_A) {
             panel.up("Delete", 0, null).down("", 0, null).left("Share", 0, null).right("", 0, null);
