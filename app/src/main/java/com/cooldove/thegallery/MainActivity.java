@@ -558,16 +558,24 @@ public final class MainActivity extends Activity {
         if (event.getAction() == KeyEvent.ACTION_DOWN && !viewing && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             if (grid == null || photos.isEmpty()) return true;
             grid.requestFocus();
-            if (grid.getSelectedItemPosition() >= 0) selected = grid.getSelectedItemPosition();
             if (key == KeyEvent.KEYCODE_DPAD_LEFT) selected = Math.max(0, selected - 1);
             else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) selected = Math.min(photos.size() - 1, selected + 1);
             else if (key == KeyEvent.KEYCODE_DPAD_UP) selected = Math.max(0, selected - gridColumns);
             else selected = Math.min(photos.size() - 1, selected + gridColumns);
             int target = selected;
-            if (displayMode == 2 && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
-                int visibleRows = Math.max(1, grid.getHeight() / dp(280));
-                int centeredRow = Math.max(0, target / gridColumns - visibleRows / 2);
-                grid.smoothScrollToPosition(Math.min(photos.size() - 1, centeredRow * gridColumns));
+            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                grid.setSelection(target);
+                if (displayMode == 2) {
+                    grid.post(() -> {
+                        int first = grid.getFirstVisiblePosition();
+                        View focused = grid.getChildAt(target - first);
+                        if (focused != null) {
+                            int desiredTop = Math.max(grid.getPaddingTop(), (grid.getHeight() - focused.getHeight()) / 2);
+                            grid.smoothScrollBy(focused.getTop() - desiredTop, 140);
+                        } else grid.smoothScrollToPosition(target);
+                        grid.post(this::updateGridHighlight);
+                    });
+                }
             } else {
                 grid.setSelection(target);
                 grid.smoothScrollToPosition(target);
@@ -812,7 +820,12 @@ public final class MainActivity extends Activity {
     private void updateWheelLabel(View view, String value) {
         if (view instanceof TextView) {
             TextView text = (TextView) view;
-            if (text.getText().toString().matches("Simple|Normal|Detailed|Detaile|Small|Big|List")) text.setText(value);
+            if (text.getText().toString().matches("Simple|Normal|Detailed|Detaile|Small|Big|List")) {
+                text.setText(value);
+                text.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                ViewGroup.LayoutParams params = text.getLayoutParams();
+                if (params != null) { params.width = text.getMeasuredWidth(); params.height = text.getMeasuredHeight(); text.setLayoutParams(params); }
+            }
         } else if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) updateWheelLabel(group.getChildAt(i), value);
