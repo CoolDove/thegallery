@@ -103,6 +103,7 @@ public final class MainActivity extends Activity {
     private Runnable holdHintRunnable;
     private int sortDirection;
     private int displayMode = 1;
+    private android.content.SharedPreferences preferences;
     private int[] activeWheelActions;
     private int[] wheelToggleActions;
     private boolean wheelUsesFaceButton;
@@ -114,6 +115,9 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        preferences = getPreferences(0);
+        sort = Math.max(0, Math.min(preferences.getInt("sort", 0), SORTS.length - 1));
+        displayMode = Math.max(0, Math.min(preferences.getInt("display_mode", 1), DISPLAY_MODES.length - 1));
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         root = new FrameLayout(this);
         setContentView(root);
@@ -358,8 +362,9 @@ public final class MainActivity extends Activity {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 image.setPadding(dp(8), dp(8), dp(8), dp(8));
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(displayMode == 2 ? 210 : 150), Gravity.TOP);
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, -1, Gravity.FILL);
                 imageParams.setMargins(dp(4), dp(4), dp(4), 0);
+                imageParams.bottomMargin = dp(displayMode == 2 ? 66 : 42);
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
                 name.setGravity(Gravity.TOP | Gravity.LEFT);
@@ -370,9 +375,8 @@ public final class MainActivity extends Activity {
                 cell.addView(name, lp);
                 TextView metadata = label("", 12);
                 metadata.setGravity(Gravity.BOTTOM | Gravity.LEFT);
-                metadata.setPadding(dp(10), dp(2), dp(10), dp(4));
-                metadata.setBackgroundColor(0xb8111315);
-                cell.addView(metadata, new FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM));
+                metadata.setPadding(dp(10), 0, dp(10), dp(2));
+                cell.addView(metadata, new FrameLayout.LayoutParams(-1, dp(22), Gravity.BOTTOM));
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); TextView metadata = (TextView) cell.getChildAt(2); Photo photo = photos.get(position); name.setText(photo.name);
             name.setVisibility(displayMode == 0 ? View.GONE : View.VISIBLE);
@@ -574,6 +578,7 @@ public final class MainActivity extends Activity {
             openPhoto();
         } else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) {
             sort = (sort + 1) % SORTS.length;
+            preferences.edit().putInt("sort", sort).apply();
             sortPhotos();
             selected = Math.min(selected, Math.max(0, photos.size() - 1));
             showGrid();
@@ -583,6 +588,7 @@ public final class MainActivity extends Activity {
     private void applySortFromWheel() {
         String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
         sort = (sort + 1) % SORTS.length;
+        preferences.edit().putInt("sort", sort).apply();
         sortPhotos();
         if (selectedName != null) {
             for (int i = 0; i < photos.size(); i++) if (selectedName.equals(photos.get(i).name)) { selected = i; break; }
@@ -767,7 +773,7 @@ public final class MainActivity extends Activity {
         int action = activeWheelActions == null ? 0 : activeWheelActions[index];
         int toggle = wheelToggleActions == null ? 0 : wheelToggleActions[index];
         if (toggle == 1) applySortFromWheel();
-        else if (toggle == 2) displayMode = (displayMode + 1) % DISPLAY_MODES.length;
+        else if (toggle == 2) { displayMode = (displayMode + 1) % DISPLAY_MODES.length; preferences.edit().putInt("display_mode", displayMode).apply(); }
         if (toggle != 0) {
             if (toggle == 2) refreshDisplayModeInGrid();
             refreshWheelToggleLabel();
@@ -796,7 +802,7 @@ public final class MainActivity extends Activity {
     private void updateWheelLabel(View view, String value) {
         if (view instanceof TextView) {
             TextView text = (TextView) view;
-            if (text.getText().toString().matches("Simple|Normal|Detailed|Small|Big|List")) text.setText(value);
+            if (text.getText().toString().matches("Simple|Normal|Detailed|Detaile|Small|Big|List")) text.setText(value);
         } else if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) updateWheelLabel(group.getChildAt(i), value);
