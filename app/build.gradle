@@ -2,6 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+dependencies {
+    implementation 'com.google.zxing:core:3.5.3'
+}
+
 android {
     namespace 'com.cooldove.thegallery'
     compileSdk 35
