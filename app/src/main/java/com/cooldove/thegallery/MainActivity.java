@@ -102,6 +102,17 @@ public final class MainActivity extends Activity {
     private ViewerController viewerController;
     private SettingsController settingsController;
     private ShareController shareController;
+    private boolean slideshowOverlayVisible;
+    private boolean slideshowPlaying;
+    private int slideshowPosition;
+    private final Runnable slideshowTick = new Runnable() {
+        @Override public void run() {
+            if (!slideshowOverlayVisible || !slideshowPlaying || photos.isEmpty()) return;
+            slideshowPosition = (slideshowPosition + 1) % Math.min(photos.size(), slideshowPhotoCount());
+            showSlideshowPhoto();
+            handler.postDelayed(this, slideshowIntervalSeconds() * 1000L);
+        }
+    };
 
     static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -314,6 +325,11 @@ public final class MainActivity extends Activity {
         page.setBackgroundColor(0xff181a1d);
         TextView heading = label("Settings", 28);
         page.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+        TextView slideshowSettings = label("Slideshow Controls  ›", 20);
+        focusable(slideshowSettings);
+        settingsActions.add(slideshowSettings);
+        slideshowSettings.setOnClickListener(v -> showSlideshowSettings());
+        page.addView(slideshowSettings, new LinearLayout.LayoutParams(-1, -2));
         TextView category = label("Sources", 21);
         category.setGravity(Gravity.CENTER_VERTICAL);
         page.addView(category, new LinearLayout.LayoutParams(-1, -2));
@@ -353,6 +369,102 @@ public final class MainActivity extends Activity {
         settingsController.onEnter();
     }
 
+    private void showSlideshowSettings() {
+        slideshowOverlayVisible = false;
+        slideshowPlaying = false;
+        handler.removeCallbacks(slideshowTick);
+        enterScreen(Screen.SETTINGS);
+        settingsActions.clear();
+        root.removeAllViews();
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setGravity(Gravity.CENTER_HORIZONTAL);
+        page.setPadding(dp(32), dp(12), dp(32), dp(12));
+        page.setBackgroundColor(0xff181a1d);
+        page.addView(label("Slideshow Controls", 28), new LinearLayout.LayoutParams(-1, -2));
+        addStepper(page, "Photo count", "slideshow_photo_count", 9, 1, 30);
+        addStepper(page, "Interval (seconds)", "slideshow_interval_seconds", 8, 1, 60);
+        TextView back = label("‹  Settings", 18);
+        focusable(back);
+        settingsActions.add(back);
+        back.setOnClickListener(v -> showSettings());
+        page.addView(back, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(page, new FrameLayout.LayoutParams(-1, -1));
+        settingsFocus = 0;
+        focusSettingsAction();
+        settingsController.onEnter();
+    }
+
+    private void addStepper(LinearLayout page, String title, String preferenceKey, int fallback, int min, int max) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = label(title, 19);
+        name.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView value = label("", 19);
+        Runnable refresh = () -> value.setText(String.valueOf(preferences.getInt(preferenceKey, fallback)));
+        refresh.run();
+        TextView minus = label("−", 24);
+        TextView plus = label("+", 24);
+        focusable(minus);
+        focusable(plus);
+        settingsActions.add(minus);
+        settingsActions.add(plus);
+        minus.setOnClickListener(v -> { preferences.edit().putInt(preferenceKey, Math.max(min, preferences.getInt(preferenceKey, fallback) - 1)).apply(); refresh.run(); });
+        plus.setOnClickListener(v -> { preferences.edit().putInt(preferenceKey, Math.min(max, preferences.getInt(preferenceKey, fallback) + 1)).apply(); refresh.run(); });
+        row.addView(minus); row.addView(value); row.addView(plus);
+        page.addView(row, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private int slideshowPhotoCount() { return Math.max(1, Math.min(30, preferences.getInt("slideshow_photo_count", 9))); }
+    private int slideshowIntervalSeconds() { return Math.max(1, Math.min(60, preferences.getInt("slideshow_interval_seconds", 8))); }
+
+    void showSlideshowControls() {
+        resetButtonHoldForUiChange();
+        if (photos.isEmpty()) return;
+        handler.removeCallbacks(slideshowTick);
+        slideshowOverlayVisible = true;
+        slideshowPlaying = false;
+        slideshowPosition = 0;
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setTag("slideshow_controls");
+        overlay.setBackgroundColor(0xee101214);
+        ImageView image = new ImageView(this);
+        image.setTag("slideshow_image");
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        overlay.addView(image, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout controls = new LinearLayout(this);
+        controls.setGravity(Gravity.CENTER);
+        controls.setBackgroundColor(0xaa101214);
+        TextView previous = label("‹", 32), play = label("▶", 24), next = label("›", 32), settings = label("⚙", 24), close = label("×", 30);
+        for (TextView control : new TextView[]{previous, play, next, settings, close}) controls.addView(control);
+        FrameLayout.LayoutParams controlParams = new FrameLayout.LayoutParams(-1, dp(72), Gravity.BOTTOM);
+        overlay.addView(controls, controlParams);
+        previous.setOnClickListener(v -> { slideshowPosition = Math.floorMod(slideshowPosition - 1, slideshowLimit()); showSlideshowPhoto(); });
+        next.setOnClickListener(v -> { slideshowPosition = (slideshowPosition + 1) % slideshowLimit(); showSlideshowPhoto(); });
+        play.setOnClickListener(v -> { slideshowPlaying = !slideshowPlaying; play.setText(slideshowPlaying ? "Ⅱ" : "▶"); handler.removeCallbacks(slideshowTick); if (slideshowPlaying) handler.postDelayed(slideshowTick, slideshowIntervalSeconds() * 1000L); });
+        settings.setOnClickListener(v -> showSlideshowSettings());
+        close.setOnClickListener(v -> closeSlideshowControls());
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        showSlideshowPhoto();
+        play.performClick();
+        previous.setFocusable(true); play.setFocusable(true); next.setFocusable(true); settings.setFocusable(true); close.setFocusable(true);
+        play.requestFocus();
+    }
+
+    private int slideshowLimit() { return Math.max(1, Math.min(photos.size(), slideshowPhotoCount())); }
+    private void showSlideshowPhoto() {
+        View overlay = root.findViewWithTag("slideshow_controls");
+        if (overlay == null || photos.isEmpty()) return;
+        ImageView image = overlay.findViewWithTag("slideshow_image");
+        Photo photo = photos.get(slideshowPosition % slideshowLimit());
+        loader.execute(() -> {
+            Bitmap bitmap = decode(photo, 2400);
+            runOnUiThread(() -> { if (slideshowOverlayVisible && image != null && bitmap != null) image.setImageBitmap(bitmap); });
+        });
+    }
+    private void closeSlideshowControls() { slideshowOverlayVisible = false; slideshowPlaying = false; handler.removeCallbacks(slideshowTick); View overlay = root.findViewWithTag("slideshow_controls"); if (overlay != null) root.removeView(overlay); grid.requestFocus(); }
+
     void focusSettingsAction() {
         if (settingsActions.isEmpty()) return;
         settingsFocus = Math.max(0, Math.min(settingsFocus, settingsActions.size() - 1));
@@ -390,6 +502,7 @@ public final class MainActivity extends Activity {
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
+        View slideshowButton = prompt("switch_x", "Slideshow", 18); slideshowButton.setFocusable(true); slideshowButton.setOnClickListener(v -> showSlideshowControls()); bar.addView(slideshowButton);
         status = null;
         refreshIndicator = label("Refreshing…", 13);
         refreshIndicator.setVisibility(View.GONE);
@@ -597,6 +710,10 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         interaction.track(event);
+        if (slideshowOverlayVisible) {
+            if (event.getAction() == KeyEvent.ACTION_UP && (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B || event.getKeyCode() == KeyEvent.KEYCODE_BACK)) { closeSlideshowControls(); return true; }
+            return super.dispatchKeyEvent(event);
+        }
         if (deleteOverlay != null) return handleDeleteOverlayKey(event);
         return controllerFor(current).onKey(event) || super.dispatchKeyEvent(event);
     }
@@ -721,7 +838,7 @@ public final class MainActivity extends Activity {
         // notifyDataSetChanged/setNumColumns can rebind or relayout children after this
         // method returns. Apply the custom selection border once those children exist.
         grid.post(() -> {
-            if (grid == null || viewing) return;
+            if (grid == null || current != Screen.GALLERY) return;
             grid.setSelection(selected);
             updateGridHighlight();
         });
