@@ -728,6 +728,7 @@ public final class MainActivity extends Activity {
     private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
     void showShareScreen() {
         if (photos.isEmpty()) return;
+        resetButtonHoldForUiChange();
         stopShareServer();
         final String token = randomToken();
         final Photo photo = photos.get(selected);

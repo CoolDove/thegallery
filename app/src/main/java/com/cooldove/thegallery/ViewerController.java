@@ -24,6 +24,10 @@ final class ViewerController implements ScreenController {
             interaction.show(HintPanel.face()
                     .x("Delete", MainActivity.LONG_PRESS_MS, null)
                     .b("Back", 0, null));
+        } else if (held == KeyEvent.KEYCODE_BUTTON_Y) {
+            interaction.show(HintPanel.face()
+                    .y("Share", MainActivity.LONG_PRESS_MS, null)
+                    .b("Back", 0, null));
         } else {
             interaction.hidePanel();
         }
@@ -70,7 +74,23 @@ final class ViewerController implements ScreenController {
             return true;
         }
 
-        if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_Y) return true;
+        if (key == KeyEvent.KEYCODE_BUTTON_Y) {
+            if (down) {
+                if (event.getRepeatCount() == 0) {
+                    interaction.beginHold(key, MainActivity.HOLD_HINT_DELAY_MS, MainActivity.LONG_PRESS_MS, 0,
+                            this::refreshHints, activity::showShareScreen, null);
+                }
+                return true;
+            }
+            if (action == KeyEvent.ACTION_UP) {
+                interaction.endHold(key);
+                refreshHints();
+                return true;
+            }
+            return true;
+        }
+
+        if (key == KeyEvent.KEYCODE_BUTTON_A) return true;
 
         if (down && !activity.photos.isEmpty()
                 && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
