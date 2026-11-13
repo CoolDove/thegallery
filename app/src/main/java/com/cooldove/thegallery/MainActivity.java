@@ -2,7 +2,6 @@ package com.cooldove.thegallery;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ColorMatrix;
@@ -14,7 +13,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -32,6 +30,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.Comparator;
 import java.util.concurrent.ExecutorService;
@@ -99,22 +98,9 @@ public final class MainActivity extends Activity {
     private boolean scanInProgress;
     private TextView refreshIndicator;
     private long refreshGeneration;
-    private final Runnable observerRefresh = () -> requestRefresh(false);
-    private final ArrayList<Uri> observedDirectories = new ArrayList<>();
-    private final ContentObserver directoryObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
-        @Override public void onChange(boolean selfChange, Uri uri) {
-            sourcesDirty = true;
-            handler.removeCallbacks(observerRefresh);
-            handler.postDelayed(observerRefresh, 350);
-        }
-    };
-    private final ContentObserver mediaObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
-        @Override public void onChange(boolean selfChange, Uri uri) {
-            sourcesDirty = true;
-            handler.removeCallbacks(observerRefresh);
-            handler.postDelayed(observerRefresh, 500);
-        }
-    };
+    private final HashMap<String, Integer> sourceFileCounts = new HashMap<>();
+    private boolean countQueryInProgress;
+    private Runnable directoryCountPoll;
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
     private int gridColumns = 1;
@@ -246,7 +232,7 @@ public final class MainActivity extends Activity {
                 selected = 0;
                 if (selectedUri != null) for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
                 scanInProgress = false;
-                observeDirectories();
+                sourcesDirty = false;
                 if (!settings && !viewing && grid != null) {
                     ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
                     if (photos.isEmpty()) { grid = null; showGrid(); }
@@ -268,33 +254,56 @@ public final class MainActivity extends Activity {
         scan();
     }
 
-    private void observeDirectories() {
-        for (Uri directory : observedDirectories) getContentResolver().unregisterContentObserver(directoryObserver);
-        observedDirectories.clear();
-        for (Uri source : sources) {
-            String id = DocumentsContract.getTreeDocumentId(source);
-            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
-            try {
-                getContentResolver().registerContentObserver(source, true, directoryObserver);
-                observedDirectories.add(source);
-                getContentResolver().registerContentObserver(children, true, directoryObserver);
-                observedDirectories.add(children);
-            } catch (SecurityException ignored) { }
-        }
-    }
-
     @Override protected void onResume() {
         super.onResume();
-        getContentResolver().registerContentObserver(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
-        observeDirectories();
         if (root != null) requestRefresh(true);
     }
 
     @Override protected void onPause() {
         super.onPause();
-        sourcesDirty = true;
-        handler.removeCallbacks(observerRefresh);
-        getContentResolver().unregisterContentObserver(mediaObserver);
+    }
+
+    private void startDirectoryCountPolling() {
+        if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll);
+        directoryCountPoll = new Runnable() {
+            @Override public void run() {
+                if (!settings && !viewing && !sharing && !sources.isEmpty()) querySourceFileCounts(true);
+                handler.postDelayed(this, 1000);
+            }
+        };
+        handler.post(directoryCountPoll);
+    }
+
+    private void querySourceFileCounts(boolean refreshOnChange) {
+        if (countQueryInProgress) return;
+        countQueryInProgress = true;
+        ArrayList<Uri> snapshot = new ArrayList<>(sources);
+        loader.execute(() -> {
+            HashMap<String, Integer> queriedCounts = new HashMap<>();
+            for (Uri source : snapshot) {
+                try {
+                    String id = DocumentsContract.getTreeDocumentId(source);
+                    Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
+                    int count = 0;
+                    try (android.database.Cursor cursor = getContentResolver().query(children,
+                            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
+                        if (cursor != null) count = cursor.getCount();
+                    }
+                    queriedCounts.put(source.toString(), count);
+                } catch (Exception ignored) { }
+            }
+            runOnUiThread(() -> {
+                countQueryInProgress = false;
+                boolean changed = false;
+                for (Uri source : snapshot) {
+                    Integer count = queriedCounts.get(source.toString());
+                    if (count == null) continue;
+                    Integer previous = sourceFileCounts.put(source.toString(), count);
+                    if (previous != null && !previous.equals(count)) changed = true;
+                }
+                if (changed && refreshOnChange && !settings && !viewing && !sharing) requestRefresh(false);
+            });
+        });
     }
 
     private void sortPhotos() {
@@ -316,6 +325,7 @@ public final class MainActivity extends Activity {
 
     private void showSettings() {
         resetButtonHoldForUiChange();
+        if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settings = true;
         settingsActions.clear();
         root.removeAllViews();
@@ -393,6 +403,8 @@ public final class MainActivity extends Activity {
     private void closeSettings() {
         resetButtonHoldForUiChange();
         settings = false;
+        querySourceFileCounts(false);
+        startDirectoryCountPolling();
         if (sourcesDirty || photos.isEmpty()) { sourcesDirty = false; scan(); } else showGrid();
     }
 
@@ -400,6 +412,8 @@ public final class MainActivity extends Activity {
         if (sourcesDirty && !scanInProgress) { sourcesDirty = false; scan(); return; }
         viewing = false; closeWheel(); removePromptOverlay(); deleteOverlay = null; swallowedKeyUps.clear(); root.removeAllViews();
         cancelButtonHold();
+        querySourceFileCounts(false);
+        startDirectoryCountPolling();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
         View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
@@ -1209,5 +1223,5 @@ public final class MainActivity extends Activity {
     }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); } }
 
-    @Override protected void onDestroy() { for (Uri directory : observedDirectories) getContentResolver().unregisterContentObserver(directoryObserver); observedDirectories.clear(); getContentResolver().unregisterContentObserver(mediaObserver); stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
+    @Override protected void onDestroy() { if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
