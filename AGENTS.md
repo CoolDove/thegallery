@@ -33,6 +33,7 @@ The Gallery is an offline image viewer for Android handheld gaming devices, prim
 - Native Android project using Java and Android Views to give direct control over controller focus and standard key events. Default Android controller key mappings are used; do not add remapping settings unless required later.
 - Controller-first input behavior is a top-level requirement. Keep focus visible and directional movement predictable; validate D-pad, A/B/X, and long-press behavior on target hardware.
 - For controller prompts, use the corresponding button icon rather than text labels such as `[B]`.
+- Before any screen transition or modal overlay is shown, call the shared `resetButtonHoldForUiChange()` interface to cancel an in-progress long-press and swallow its eventual key-up. This prevents the held action from leaking into the newly shown UI; use it for dialogs/overlays as well as screen changes.
 - Thumbnail presentation and performance limits. Expect folders containing thousands of images; first phase should use a virtualized grid, asynchronous thumbnail loading, and a bounded in-memory thumbnail cache rather than loading full-resolution images into the grid.
 - Exact touch gestures and remaining controller mappings.
 
