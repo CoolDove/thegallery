@@ -361,10 +361,8 @@ public final class MainActivity extends Activity {
             if (cell.getChildCount() == 0) {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                image.setPadding(dp(8), dp(8), dp(8), dp(8));
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, -1, Gravity.FILL);
-                imageParams.setMargins(dp(4), dp(4), dp(4), 0);
-                imageParams.bottomMargin = dp(displayMode == 2 ? 66 : 42);
+                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, -1);
+                imageParams.setMargins(dp(8), dp(8), dp(8), dp(8));
                 cell.addView(image, imageParams);
                 TextView name = label("", 13);
                 name.setGravity(Gravity.TOP | Gravity.LEFT);
@@ -386,7 +384,11 @@ public final class MainActivity extends Activity {
             cellBackground.setColor(0xff35383d);
             cellBackground.setCornerRadius(dp(6));
             cell.setBackground(cellBackground);
-            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(displayMode == 2 ? 270 : displayMode == 0 ? 166 : 208)));
+            int rowHeight = displayMode == 2 ? 270 : 208;
+            cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(rowHeight)));
+            FrameLayout.LayoutParams imageParams = (FrameLayout.LayoutParams) image.getLayoutParams();
+            imageParams.bottomMargin = dp(displayMode == 0 ? 8 : displayMode == 2 ? 66 : 50);
+            image.setLayoutParams(imageParams);
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
@@ -561,8 +563,16 @@ public final class MainActivity extends Activity {
             else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) selected = Math.min(photos.size() - 1, selected + 1);
             else if (key == KeyEvent.KEYCODE_DPAD_UP) selected = Math.max(0, selected - gridColumns);
             else selected = Math.min(photos.size() - 1, selected + gridColumns);
-            grid.setSelection(selected);
-            grid.smoothScrollToPosition(selected);
+            int target = selected;
+            if (displayMode == 2 && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
+                int visibleRows = Math.max(1, grid.getHeight() / dp(280));
+                int centeredRow = Math.max(0, target / gridColumns - visibleRows / 2);
+                grid.smoothScrollToPosition(Math.min(photos.size() - 1, centeredRow * gridColumns));
+            } else {
+                grid.setSelection(target);
+                grid.smoothScrollToPosition(target);
+            }
+            grid.post(this::updateGridHighlight);
             updateGridHighlight();
             lastDpadMove = android.os.SystemClock.uptimeMillis();
             return true;
