@@ -15,6 +15,16 @@ final class HintPanel {
 
     static HintPanel face() { return new HintPanel(false); }
 
+    /** Face panel with only the B button, used by Settings and Share. */
+    static HintPanel backOnly(Runnable action) {
+        HintPanel panel = new HintPanel(false);
+        panel.b("Back", 0, action);
+        panel.x.visible = false;
+        panel.y.visible = false;
+        panel.a.visible = false;
+        return panel;
+    }
+
     static HintPanel wheel() { return new HintPanel(true); }
 
     HintPanel x(String caption, long holdMs, Runnable action) { x.set(caption, holdMs, action); return this; }
@@ -32,6 +42,7 @@ final class HintPanel {
     }
 
     static final class Hint {
+        boolean visible = true;
         String caption = "";
         long holdMs;
         Runnable action;

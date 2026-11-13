@@ -232,6 +232,7 @@ final class InteractionSystem {
 
     private void addFaceButton(FrameLayout cluster, String iconName, HintPanel.Hint hint,
                                int cx, int cy, int diameter, int captionSide) {
+        if (!hint.visible) return;
         ImageView icon = activity.icon(iconName);
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
         iconParams.leftMargin = cx - diameter / 2;

@@ -16,7 +16,7 @@ final class SettingsController implements ScreenController {
 
     @Override public void refreshHints() {
         if (activity.current != Screen.SETTINGS) return;
-        interaction.show(HintPanel.face().b("Back", 0, activity::closeSettings));
+        interaction.show(HintPanel.backOnly(activity::closeSettings));
     }
 
     @Override public boolean onKey(KeyEvent event) {

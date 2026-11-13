@@ -16,7 +16,7 @@ final class ShareController implements ScreenController {
 
     @Override public void refreshHints() {
         if (activity.current != Screen.SHARE) return;
-        interaction.show(HintPanel.face().b("Back", 0, activity::closeShareScreen));
+        interaction.show(HintPanel.backOnly(activity::closeShareScreen));
     }
 
     @Override public boolean onKey(KeyEvent event) {
