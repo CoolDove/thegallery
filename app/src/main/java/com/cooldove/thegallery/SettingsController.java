@@ -29,6 +29,11 @@ final class SettingsController implements ScreenController {
         }
         if (action != KeyEvent.ACTION_DOWN) return true;
 
+        if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+            if (!activity.settingsActions.isEmpty()) activity.settingsActions.get(activity.settingsFocus).performClick();
+            return true;
+        }
+
         if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
             if (!activity.settingsActions.isEmpty()) {
                 activity.settingsFocus = (activity.settingsFocus + 1) % activity.settingsActions.size();
