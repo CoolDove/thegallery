@@ -320,10 +320,13 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < grid.getChildCount(); i++) {
             View child = grid.getChildAt(i);
             boolean active = first + i == selected;
-            GradientDrawable outline = new GradientDrawable();
-            outline.setColor(0xff35383d);
-            if (active) outline.setStroke(dp(3), 0xffaeb3b8);
-            child.setBackground(outline);
+            GradientDrawable background = child.getBackground() instanceof GradientDrawable
+                    ? (GradientDrawable) child.getBackground() : new GradientDrawable();
+            background.setColor(0xff35383d);
+            background.setCornerRadius(dp(6));
+            background.setStroke(active ? dp(3) : 0, active ? 0xffaeb3b8 : 0x00000000);
+            if (child.getBackground() != background) child.setBackground(background);
+            if (android.os.Build.VERSION.SDK_INT >= 21) child.setClipToOutline(true);
         }
     }
 
