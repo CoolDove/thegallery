@@ -350,6 +350,7 @@ public final class MainActivity extends Activity {
         if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settings = true;
         activeScreen = Screen.SETTINGS;
+        resetGalleryChordState();
         settingsActions.clear();
         root.removeAllViews();
         removePromptOverlay();
@@ -658,7 +659,7 @@ public final class MainActivity extends Activity {
         } else if (event.getAction() == KeyEvent.ACTION_UP) {
             pressedKeys.remove(key);
         }
-        if (!viewing && grid != null && isDpadKey(key)) {
+        if (activeScreen == Screen.GALLERY && !viewing && !settings && grid != null && isDpadKey(key)) {
             boolean topChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_UP) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_LEFT);
             boolean bottomChord = pressedKeys.contains(KeyEvent.KEYCODE_DPAD_DOWN) || pressedKeys.contains(KeyEvent.KEYCODE_DPAD_RIGHT);
             boolean changed = topChord != fastScrollTopChord || bottomChord != fastScrollBottomChord;
@@ -818,6 +819,11 @@ public final class MainActivity extends Activity {
             grid.post(() -> { if (grid != null) grid.setSelection(selected); });
         }
         updateGridHighlight();
+    }
+
+    private void resetGalleryChordState() {
+        fastScrollTopChord = false;
+        fastScrollBottomChord = false;
     }
 
     private void applySortFromWheel() {
