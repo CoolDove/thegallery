@@ -2,12 +2,14 @@ package com.cooldove.thegallery;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -58,6 +60,12 @@ public final class MainActivity extends Activity {
     private int selected, sort;
     private boolean viewing;
     private boolean settings;
+    private boolean sourcesDirty;
+    private boolean scanInProgress;
+    private final ArrayList<Uri> observedDirectories = new ArrayList<>();
+    private final ContentObserver directoryObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+        @Override public void onChange(boolean selfChange, Uri uri) { requestRefresh(false); }
+    };
     private final ArrayList<View> settingsActions = new ArrayList<>();
     private int settingsFocus;
     private int gridColumns = 1;
@@ -125,16 +133,19 @@ public final class MainActivity extends Activity {
             int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             try { getContentResolver().takePersistableUriPermission(folder, flags); } catch (SecurityException ignored) { }
             if (request == PICK_SOURCE) {
-                if (!sources.contains(folder)) sources.add(folder);
+                if (!sources.contains(folder)) { sources.add(folder); sourcesDirty = true; }
                 persistSources();
                 if (settings) showSettings();
             } else {
-                sources.clear(); sources.add(folder); persistSources(); scan();
+                sources.clear(); sources.add(folder); persistSources(); sourcesDirty = true; scan();
             }
         } else if (request == PICK_FOLDER && folder == null) empty("No folder selected", true);
     }
 
     private void scan() {
+        if (scanInProgress) { sourcesDirty = true; return; }
+        scanInProgress = true;
+        String selectedUri = selected >= 0 && selected < photos.size() ? photos.get(selected).uri.toString() : null;
         root.removeAllViews(); photos.clear(); selected = 0;
         empty("Loading images…", false);
         loader.execute(() -> {
@@ -151,11 +162,49 @@ public final class MainActivity extends Activity {
                     }
                 }
             } catch (Exception e) {
-                runOnUiThread(() -> empty("Folder unavailable. Choose another folder.", true)); return;
+                runOnUiThread(() -> { scanInProgress = false; empty("Folder unavailable. Choose another folder.", true); }); return;
             }
-            photos.addAll(found);
-            runOnUiThread(() -> { sortPhotos(); if (settings) showSettings(); else showGrid(); });
+            runOnUiThread(() -> {
+                photos.addAll(found);
+                sortPhotos();
+                if (selectedUri != null) for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
+                scanInProgress = false;
+                observeDirectories();
+                if (settings) showSettings(); else showGrid();
+                if (sourcesDirty) { sourcesDirty = false; scan(); }
+            });
         });
+    }
+
+    private void requestRefresh(boolean onlyIfDirty) {
+        if (settings || viewing) { sourcesDirty = true; return; }
+        if (root == null) return;
+        if (onlyIfDirty && !sourcesDirty) return;
+        sourcesDirty = false;
+        scan();
+    }
+
+    private void observeDirectories() {
+        for (Uri directory : observedDirectories) getContentResolver().unregisterContentObserver(directoryObserver);
+        observedDirectories.clear();
+        for (Uri source : sources) {
+            String id = DocumentsContract.getTreeDocumentId(source);
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
+            try {
+                getContentResolver().registerContentObserver(children, true, directoryObserver);
+                observedDirectories.add(children);
+            } catch (SecurityException ignored) { }
+        }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (root != null) requestRefresh(true);
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        sourcesDirty = true;
     }
 
     private void sortPhotos() {
@@ -201,7 +250,7 @@ public final class MainActivity extends Activity {
             focusable(remove);
             settingsActions.add(remove);
             remove.setOnClickListener(v -> {
-                sources.remove(source);
+                sources.remove(source); sourcesDirty = true;
                 persistSources();
                 if (sources.isEmpty()) { photos.clear(); showGrid(); }
                 else { folder = sources.get(0); scan(); }
@@ -248,10 +297,11 @@ public final class MainActivity extends Activity {
 
     private void closeSettings() {
         settings = false;
-        if (photos.isEmpty()) scan(); else showGrid();
+        if (sourcesDirty || photos.isEmpty()) { sourcesDirty = false; scan(); } else showGrid();
     }
 
     private void showGrid() {
+        if (sourcesDirty && !scanInProgress) { sourcesDirty = false; scan(); return; }
         viewing = false; root.removeAllViews();
         LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -488,5 +538,5 @@ public final class MainActivity extends Activity {
         handler.post(exitRunnable);
     }
     private void cancelExitHold() { if (exitRunnable != null) handler.removeCallbacks(exitRunnable); if (exitHintRunnable != null) handler.removeCallbacks(exitHintRunnable); exitRunnable = null; exitHintRunnable = null; if (exitProgress != null) root.removeView(exitProgress); if (exitHint != null) root.removeView(exitHint); exitProgress = null; exitHint = null; }
-    @Override protected void onDestroy() { super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
+    @Override protected void onDestroy() { for (Uri directory : observedDirectories) getContentResolver().unregisterContentObserver(directoryObserver); observedDirectories.clear(); super.onDestroy(); handler.removeCallbacks(dpadMove); loader.shutdownNow(); }
 }
