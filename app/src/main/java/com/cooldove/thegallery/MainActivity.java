@@ -556,10 +556,10 @@ public final class MainActivity extends Activity {
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
         cluster.setBackgroundColor(0x99000000);
-        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Image actions" : (viewing ? "" : "View");
+        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "View");
         String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
         String y = "";
-        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Gallery" : "Hold to exit");
+        String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
         int diameter = dp(36);
         int centerX = dp(66), centerY = dp(66);
         addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(45), diameter, false, Gravity.BOTTOM);
