@@ -502,11 +502,7 @@ public final class MainActivity extends Activity {
             if ((topChord && key == KeyEvent.KEYCODE_BUTTON_X)
                     || (bottomChord && key == KeyEvent.KEYCODE_BUTTON_B)) {
                 if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                    selected = topChord ? 0 : photos.size() - 1;
-                    grid.requestFocus();
-                    grid.setSelection(selected);
-                    grid.smoothScrollToPosition(selected);
-                    updateGridHighlight();
+                    scrollGridToEdge(topChord);
                 }
                 return true;
             }
@@ -580,6 +576,14 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void scrollGridToEdge(boolean top) {
+        if (grid == null || photos.isEmpty()) return;
+        selected = top ? 0 : photos.size() - 1;
+        grid.requestFocus();
+        grid.smoothScrollToPosition(selected);
+        updateGridHighlight();
+    }
+
     private void applySortFromWheel() {
         String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
         sort = (sort + 1) % SORTS.length;
@@ -633,10 +637,12 @@ public final class MainActivity extends Activity {
         boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
         boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
         boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
-        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0);
+        Runnable xPromptAction = !viewing ? () -> scrollGridToEdge(true) : null;
+        addClusterButton(cluster, "switch_x_96dpi", x, centerX, centerY - dp(interval), diameter, Gravity.RIGHT, holdX ? LONG_PRESS_MS : 0, xPromptAction);
         addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
-        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0);
-        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0);
+        addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0, null);
+        Runnable bPromptAction = !viewing ? () -> scrollGridToEdge(false) : null;
+        addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0, bPromptAction);
         root.addView(cluster, clusterParams(Gravity.RIGHT));
         promptOverlay = cluster;
     }
@@ -646,13 +652,24 @@ public final class MainActivity extends Activity {
     }
     /** captionSide marks the side of the button icon the caption is placed on: TOP = above, BOTTOM = below, LEFT = start, RIGHT = end. holdRingDuration > 0 draws a hold ring around this same icon. */
     private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
-        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration);
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration, null);
     }
     private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
+        addClusterButton(cluster, buttonIcon, caption, cx, cy, diameter, captionSide, holdRingDuration, null);
+    }
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration, Runnable action) {
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration, action);
+    }
+    private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration, Runnable action) {
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
         iconParams.leftMargin = cx - diameter / 2;
         iconParams.topMargin = cy - diameter / 2;
         cluster.addView(buttonIcon, iconParams);
+        if (action != null) {
+            buttonIcon.setClickable(true);
+            buttonIcon.setContentDescription(caption);
+            buttonIcon.setOnClickListener(v -> action.run());
+        }
         if (holdRingDuration > 0) addHoldRing(cluster, cx, cy, diameter + dp(10), holdRingDuration);
         if (caption.isEmpty()) return;
 
