@@ -151,6 +151,7 @@ public final class MainActivity extends Activity {
         void refresh(boolean holding) { render(holding); }
         private void render(boolean holding) {
             removePromptOverlay();
+            if (activeScreen == Screen.SETTINGS) holding = false;
             if (root == null || activeScreen == Screen.VIEWER && !holding) return;
             renderButtonHints(holding);
         }
@@ -347,6 +348,8 @@ public final class MainActivity extends Activity {
 
     private void showSettings() {
         resetButtonHoldForUiChange();
+        closeWheel();
+        radialOverlay = null;
         if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settings = true;
         activeScreen = Screen.SETTINGS;
@@ -1037,9 +1040,9 @@ public final class MainActivity extends Activity {
         }
     }
     private boolean handleWheelKey(KeyEvent e) {
-        if (e.getAction() == KeyEvent.ACTION_UP && wheelUsesFaceButton && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
+        if (e.getAction() == KeyEvent.ACTION_UP && wheelUsesFaceButton && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (activeScreen == Screen.GALLERY || activeScreen == Screen.VIEWER) addButtonPrompts(false); return true; }
         if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
-        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
+        int direction = e.getKeyCode(); if (direction == KeyEvent.KEYCODE_BUTTON_B || direction == KeyEvent.KEYCODE_BACK) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; if (activeScreen == Screen.GALLERY || activeScreen == Screen.VIEWER) addButtonPrompts(false); return true; }
         if (direction == heldButton || e.getRepeatCount() > 0) return true;
         int index = direction == KeyEvent.KEYCODE_DPAD_UP ? 0 : direction == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : direction == KeyEvent.KEYCODE_DPAD_LEFT ? 2 : direction == KeyEvent.KEYCODE_DPAD_RIGHT ? 3 : -1;
         if (index < 0) return true;
