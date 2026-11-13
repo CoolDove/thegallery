@@ -561,25 +561,28 @@ public final class MainActivity extends Activity {
         String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
         String y = heldButton == KeyEvent.KEYCODE_BUTTON_Y && holding ? "View options" : "";
         String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Gallery" : "Hold to exit");
-        addClusterButton(cluster, "switch_x_96dpi", x, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        addClusterButton(cluster, "switch_y_96dpi", y, Gravity.CENTER_VERTICAL | Gravity.LEFT);
-        addClusterButton(cluster, "switch_a_96dpi", a, Gravity.CENTER_VERTICAL | Gravity.RIGHT);
-        addClusterButton(cluster, "switch_b_96dpi", b, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(240), dp(132), Gravity.RIGHT | Gravity.BOTTOM);
+        addClusterButton(cluster, "switch_x_96dpi", x, Gravity.TOP | Gravity.CENTER_HORIZONTAL, false);
+        addClusterButton(cluster, "switch_y_96dpi", y, Gravity.CENTER_VERTICAL | Gravity.LEFT, false);
+        addClusterButton(cluster, "switch_a_96dpi", a, Gravity.CENTER_VERTICAL | Gravity.RIGHT, true);
+        addClusterButton(cluster, "switch_b_96dpi", b, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, false);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(220), dp(146), Gravity.RIGHT | Gravity.BOTTOM);
         root.addView(cluster, lp);
         promptOverlay = cluster;
     }
-    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int gravity) {
+    private void addClusterButton(FrameLayout cluster, String iconName, String caption, int gravity, boolean captionBeforeIcon) {
         LinearLayout item = new LinearLayout(this);
         item.setGravity(Gravity.CENTER);
-        item.setOrientation(gravity == (Gravity.TOP | Gravity.CENTER_HORIZONTAL) || gravity == (Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL) ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        boolean centerRow = gravity == (Gravity.TOP | Gravity.CENTER_HORIZONTAL) || gravity == (Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        item.setOrientation(centerRow || gravity == (Gravity.CENTER_VERTICAL | Gravity.RIGHT) ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         ImageView buttonIcon = icon(iconName);
-        item.addView(buttonIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        TextView text = null;
         if (!caption.isEmpty()) {
-            TextView text = label(caption, 12);
+            text = label(caption, 12);
             text.setPadding(dp(3), 0, dp(3), 0);
-            item.addView(text);
         }
+        if (captionBeforeIcon && text != null) item.addView(text);
+        item.addView(buttonIcon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        if (!captionBeforeIcon && text != null) item.addView(text);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, gravity);
         cluster.addView(item, params);
     }
