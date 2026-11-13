@@ -45,6 +45,12 @@ public final class MainActivity extends Activity {
     private static final int PICK_SOURCE = 2;
     private static final String PREFS = "gallery";
     private static final String[] SORTS = {"Newest", "Oldest", "Name A–Z", "Name Z–A"};
+    /** Shared geometry so the XYAB prompt panel and the D-pad wheel line up exactly. */
+    private static final int CLUSTER_BUTTON_DP = 26;
+    private static final int CLUSTER_INTERVAL_DP = 30;
+    private static final int CLUSTER_WIDTH_DP = 250;
+    private static final int CLUSTER_HEIGHT_DP = 124;
+    private static final int CLUSTER_CENTER_X_DP = 107;
     private final ArrayList<Photo> photos = new ArrayList<>();
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
@@ -562,7 +568,7 @@ public final class MainActivity extends Activity {
             exitRunnable = new Runnable() { @Override public void run() { if (android.os.SystemClock.uptimeMillis() - heldButtonAt >= EXIT_HOLD_DURATION_MS) finish(); else handler.postDelayed(this, 30); } };
             handler.post(exitRunnable);
         } else {
-            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel("Image actions", new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
+            longPressRunnable = () -> { if (heldButton != key) return; longPressTriggered = true; if (key == KeyEvent.KEYCODE_BUTTON_A && !viewing) showWheel(new String[]{"Delete", "Share", "", ""}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && !viewing) showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0, 0, 0, 0}, new int[]{1, 2, 0, 0}); else if (key == KeyEvent.KEYCODE_BUTTON_X && viewing) showDeleteConfirmation(); };
             handler.postDelayed(longPressRunnable, LONG_PRESS_MS);
         }
     }
@@ -579,14 +585,13 @@ public final class MainActivity extends Activity {
         if (root == null || viewing && !holding) return;
         FrameLayout cluster = new FrameLayout(this);
         // cluster.setBackgroundColor(0x99000000);
-        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "View");
+        String a = heldButton == KeyEvent.KEYCODE_BUTTON_A && holding ? "Actions" : (viewing ? "" : "Open");
         String x = heldButton == KeyEvent.KEYCODE_BUTTON_X && holding ? (viewing ? "Delete" : "View options") : (viewing ? "" : "Sort");
         String y = viewing ? "" : "Select";
         String b = heldButton == KeyEvent.KEYCODE_BUTTON_B && holding ? "Exit" : (viewing ? "Back" : "Hold to exit");
-        int diameter = dp(26);
-        int interval = 30;
-        int panelWidth = dp(250), panelHeight = dp(124);
-        int centerX = dp(107), centerY = panelHeight / 2;
+        int diameter = dp(CLUSTER_BUTTON_DP);
+        int interval = CLUSTER_INTERVAL_DP;
+        int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
         boolean holdA = holding && heldButton == KeyEvent.KEYCODE_BUTTON_A && !viewing;
         boolean holdX = holding && heldButton == KeyEvent.KEYCODE_BUTTON_X;
         boolean holdB = holding && (heldButton == KeyEvent.KEYCODE_BUTTON_B || heldButton == KeyEvent.KEYCODE_BACK);
@@ -594,13 +599,18 @@ public final class MainActivity extends Activity {
         addClusterButton(cluster, "switch_y", y, centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
         addClusterButton(cluster, "switch_a_96dpi", a, centerX + dp(interval), centerY, diameter, Gravity.RIGHT, holdA ? LONG_PRESS_MS : 0);
         addClusterButton(cluster, "switch_b_96dpi", b, centerX, centerY + dp(interval), diameter, Gravity.RIGHT, holdB ? EXIT_HOLD_DURATION_MS : 0);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(panelWidth, panelHeight, Gravity.RIGHT | Gravity.BOTTOM);
-        root.addView(cluster, lp);
+        root.addView(cluster, clusterParams(Gravity.RIGHT));
         promptOverlay = cluster;
+    }
+
+    private FrameLayout.LayoutParams clusterParams(int horizontalGravity) {
+        return new FrameLayout.LayoutParams(dp(CLUSTER_WIDTH_DP), dp(CLUSTER_HEIGHT_DP), horizontalGravity | Gravity.BOTTOM);
     }
     /** captionSide marks the side of the button icon the caption is placed on: TOP = above, BOTTOM = below, LEFT = start, RIGHT = end. holdRingDuration > 0 draws a hold ring around this same icon. */
     private void addClusterButton(FrameLayout cluster, String iconName, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
-        ImageView buttonIcon = icon(iconName);
+        addClusterButton(cluster, icon(iconName), caption, cx, cy, diameter, captionSide, holdRingDuration);
+    }
+    private void addClusterButton(FrameLayout cluster, View buttonIcon, String caption, int cx, int cy, int diameter, int captionSide, long holdRingDuration) {
         FrameLayout.LayoutParams iconParams = new FrameLayout.LayoutParams(diameter, diameter, Gravity.TOP | Gravity.LEFT);
         iconParams.leftMargin = cx - diameter / 2;
         iconParams.topMargin = cy - diameter / 2;
@@ -680,41 +690,24 @@ public final class MainActivity extends Activity {
     }
     private void removePromptOverlay() { stopHoldRingTicker(); if (promptOverlay != null && promptOverlay.getParent() == root) root.removeView(promptOverlay); promptOverlay = null; }
 
-    private void showWheel(String title, String[] labels, int[] actions) {
-        showWheel(title, labels, actions, new int[4]);
+    private void showWheel(String[] labels, int[] actions) {
+        showWheel(labels, actions, new int[4]);
     }
-    private void showWheel(String title, String[] labels, int[] actions, int[] toggles) {
+    private void showWheel(String[] labels, int[] actions, int[] toggles) {
+        closeWheel();
         activeWheelActions = actions;
         wheelToggleActions = toggles;
         wheelUsesFaceButton = heldButton == KeyEvent.KEYCODE_BUTTON_A || heldButton == KeyEvent.KEYCODE_BUTTON_X || heldButton == KeyEvent.KEYCODE_BUTTON_Y;
-        if (radialOverlay == null) {
-            FrameLayout overlay = new FrameLayout(this);
-            overlay.setBackgroundColor(0x99000000);
-            LinearLayout panel = new LinearLayout(this);
-            panel.setOrientation(LinearLayout.VERTICAL);
-            panel.setGravity(Gravity.CENTER);
-            panel.setPadding(dp(24), dp(18), dp(24), dp(18));
-            panel.setBackgroundColor(0xff272b30);
-            TextView heading = label(title, 20);
-            heading.setTag("wheel_title");
-            panel.addView(heading);
-            String[] icons = {"↑  ", "↓  ", "←  ", "→  "};
-            for (int i = 0; i < 4; i++) {
-                TextView option = label(icons[i] + labels[i], 18);
-                option.setTag("wheel_option_" + i);
-                panel.addView(option);
-            }
-            overlay.addView(panel, new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.LEFT));
-            FrameLayout.LayoutParams panelParams = (FrameLayout.LayoutParams) panel.getLayoutParams();
-            panelParams.leftMargin = dp(18);
-            panelParams.bottomMargin = dp(18);
-            panel.setLayoutParams(panelParams);
-            root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
-            radialOverlay = overlay;
-        }
-        LinearLayout panel = (LinearLayout) ((FrameLayout) radialOverlay).getChildAt(0);
-        ((TextView) panel.getChildAt(0)).setText(title);
-        for (int i = 0; i < 4; i++) ((TextView) panel.getChildAt(i + 1)).setText(new String[]{"↑  ", "↓  ", "←  ", "→  "}[i] + labels[i]);
+        FrameLayout cluster = new FrameLayout(this);
+        int diameter = dp(CLUSTER_BUTTON_DP);
+        int interval = CLUSTER_INTERVAL_DP;
+        int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
+        addClusterButton(cluster, new DpadIcon(DPAD_UP), labels[0], centerX, centerY - dp(interval), diameter, Gravity.RIGHT, 0);
+        addClusterButton(cluster, new DpadIcon(DPAD_DOWN), labels[1], centerX, centerY + dp(interval), diameter, Gravity.RIGHT, 0);
+        addClusterButton(cluster, new DpadIcon(DPAD_LEFT), labels[2], centerX - dp(interval), centerY, diameter, Gravity.LEFT, 0);
+        addClusterButton(cluster, new DpadIcon(DPAD_RIGHT), labels[3], centerX + dp(interval), centerY, diameter, Gravity.RIGHT, 0);
+        root.addView(cluster, clusterParams(Gravity.LEFT));
+        radialOverlay = cluster;
     }
     private boolean handleWheelKey(KeyEvent e) {
         if (e.getAction() == KeyEvent.ACTION_UP && wheelUsesFaceButton && e.getKeyCode() == heldButton) { closeWheel(); heldButton = KeyEvent.KEYCODE_UNKNOWN; longPressTriggered = false; addButtonPrompts(false); return true; }
@@ -728,13 +721,51 @@ public final class MainActivity extends Activity {
         if (toggle == 1) applySortFromWheel();
         else if (toggle == 2) imageSizeMode = (imageSizeMode + 1) % 3;
         if (toggle != 0) {
-            showWheel("View options", new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
+            showWheel(new String[]{SORTS[sort], imageSizeLabel(), "", ""}, new int[]{0,0,0,0}, wheelToggleActions == null ? new int[]{1,2,0,0} : wheelToggleActions);
         } else {
             closeWheel();
             if (action == 1) showDeleteConfirmation(); else if (action == 2) showPlaceholder("Sharing will be available later");
         }
         return true;
     }
+    private static final int DPAD_UP = 0, DPAD_DOWN = 1, DPAD_LEFT = 2, DPAD_RIGHT = 3;
+
+    private final class DpadIcon extends View {
+        private final int direction;
+        private final Paint circlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint armPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint activeArmPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        DpadIcon(int direction) {
+            super(MainActivity.this);
+            this.direction = direction;
+            circlePaint.setStyle(Paint.Style.FILL);
+            circlePaint.setColor(0xff384162);
+            ringPaint.setStyle(Paint.Style.STROKE);
+            ringPaint.setStrokeWidth(dp(2));
+            ringPaint.setColor(0xffd7dde5);
+            armPaint.setColor(0x59d3e1e7);
+            activeArmPaint.setColor(0xffd3e1e7);
+        }
+        @Override protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f, cy = getHeight() / 2f;
+            float radius = Math.min(getWidth(), getHeight()) / 2f - dp(1);
+            canvas.drawCircle(cx, cy, radius, circlePaint);
+            canvas.drawCircle(cx, cy, radius - dp(1), ringPaint);
+            float halfThickness = radius * 0.19f;
+            float corner = halfThickness;
+            for (int side = DPAD_UP; side <= DPAD_RIGHT; side++) {
+                boolean active = side == direction;
+                Paint paint = active ? activeArmPaint : armPaint;
+                float length = radius * (active ? 0.78f : 0.58f);
+                if (side == DPAD_UP) canvas.drawRoundRect(cx - halfThickness, cy - length, cx + halfThickness, cy, corner, corner, paint);
+                else if (side == DPAD_DOWN) canvas.drawRoundRect(cx - halfThickness, cy, cx + halfThickness, cy + length, corner, corner, paint);
+                else if (side == DPAD_LEFT) canvas.drawRoundRect(cx - length, cy - halfThickness, cx, cy + halfThickness, corner, corner, paint);
+                else canvas.drawRoundRect(cx, cy - halfThickness, cx + length, cy + halfThickness, corner, corner, paint);
+            }
+        }
+    }
+
     private void closeWheel() { if (radialOverlay != null && radialOverlay.getParent() == root) root.removeView(radialOverlay); radialOverlay = null; activeWheelActions = null; wheelToggleActions = null; wheelUsesFaceButton = false; }
     private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
     private void showDeleteConfirmation() { if (photos.isEmpty()) return; android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this).setMessage("Delete this image?").setPositiveButton("A · YES", (d,w) -> deleteCurrentPhoto()).setNegativeButton("B · NO", (d,w) -> {}).create(); dialog.setOnShowListener(d -> { dialog.getButton(-1).setText("A · YES"); dialog.getButton(-2).setText("B · NO"); }); dialog.show(); }
