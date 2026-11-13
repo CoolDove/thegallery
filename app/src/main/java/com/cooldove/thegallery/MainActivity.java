@@ -234,20 +234,23 @@ public final class MainActivity extends Activity {
                 showSettings();
             });
             row.addView(remove);
-            page.addView(row, new LinearLayout.LayoutParams(-1, -2));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            rowParams.topMargin = dp(6);
+            page.addView(row, rowParams);
         }
         TextView add = label("Add source", 20);
         focusable(add);
         settingsActions.add(add);
         add.setOnClickListener(v -> pickSource());
-        page.addView(add, new LinearLayout.LayoutParams(-1, -2));
-        View back = prompt("switch_b_96dpi", "Back to gallery", 18);
-        focusable(back);
-        settingsActions.add(back);
-        back.setOnClickListener(v -> closeSettings());
-        page.addView(back, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, -2);
+        addParams.topMargin = dp(6);
+        page.addView(add, addParams);
         root.addView(page, new FrameLayout.LayoutParams(-1, -1));
-        settingsFocus = Math.max(0, settingsActions.size() - 2);
+        FrameLayout backCluster = new FrameLayout(this);
+        addClusterButton(backCluster, "switch_b_96dpi", "Back", dp(CLUSTER_CENTER_X_DP), dp(CLUSTER_HEIGHT_DP) / 2 + dp(CLUSTER_INTERVAL_DP), dp(CLUSTER_BUTTON_DP), Gravity.RIGHT, 0);
+        backCluster.setOnClickListener(v -> closeSettings());
+        root.addView(backCluster, clusterParams(Gravity.RIGHT));
+        settingsFocus = Math.max(0, settingsActions.size() - 1);
         focusSettingsAction();
     }
 
@@ -487,7 +490,7 @@ public final class MainActivity extends Activity {
                 if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     if (!settingsActions.isEmpty()) settingsActions.get(settingsFocus).performClick(); return true;
                 }
-                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) { closeSettings(); return true; }
+                if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU) { closeSettings(); return true; }
             }
             return true;
         }
