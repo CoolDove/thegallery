@@ -615,11 +615,6 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private boolean isDpadKey(int key) {
-        return key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
-                || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
-    }
-
     private void scrollGridToEdge(boolean top, boolean animate) {
         if (grid == null || photos.isEmpty()) return;
         selected = top ? 0 : photos.size() - 1;
