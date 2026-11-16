@@ -2,11 +2,14 @@ package com.dove.thegallery;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
-import android.graphics.drawable.GradientDrawable;
+import android.graphics.LinearGradient;
+import android.graphics.Shader;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -102,6 +105,7 @@ public final class MainActivity extends Activity {
     private ViewerController viewerController;
     private SettingsController settingsController;
     private ShareController shareController;
+    Theme theme;
 
     static final class Photo {
         final Uri uri; final String name; final long modified;
@@ -114,7 +118,9 @@ public final class MainActivity extends Activity {
         sort = Math.max(0, Math.min(preferences.getInt("sort", 0), SORTS.length - 1));
         displayMode = Math.max(0, Math.min(preferences.getInt("display_mode", 1), DISPLAY_MODES.length - 1));
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        theme = Theme.of(this);
         root = new FrameLayout(this);
+        root.setBackground(theme.backdrop());
         setContentView(root);
         interaction = new InteractionSystem(this, root);
         galleryController = new GalleryController(this, interaction);
@@ -133,14 +139,104 @@ public final class MainActivity extends Activity {
 
     private void empty(String text, boolean allowPicker) {
         root.removeAllViews();
-        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setGravity(Gravity.CENTER);
-        TextView title = label(text, 25); box.addView(title);
-        if (allowPicker) { View choose = prompt("switch_a_96dpi", "Choose folder", 20); choose.setFocusable(true); choose.setFocusableInTouchMode(true); choose.setOnClickListener(v -> pickFolder()); box.addView(choose); choose.requestFocus(); }
+        root.setBackground(theme.backdrop());
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER);
+        box.setPadding(dp(40), dp(20), dp(40), dp(90));
+        box.addView(brand(), new LinearLayout.LayoutParams(-2, -2));
+        TextView title = heading(text, 26);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-2, -2);
+        titleParams.topMargin = dp(18);
+        box.addView(title, titleParams);
+        TextView note = label("Your images stay on this device.", 14);
+        note.setTextColor(theme.textSecondary);
+        LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(-2, -2);
+        noteParams.topMargin = dp(2);
+        box.addView(note, noteParams);
+        if (allowPicker) {
+            View choose = actionPill("switch_plus_96dpi", "Choose folder");
+            choose.setOnClickListener(v -> pickFolder());
+            LinearLayout.LayoutParams chooseParams = new LinearLayout.LayoutParams(-2, -2);
+            chooseParams.topMargin = dp(22);
+            box.addView(choose, chooseParams);
+            choose.requestFocus();
+        }
         root.addView(box, new FrameLayout.LayoutParams(-1, -1));
         status = title;
     }
 
-    TextView label(String text, int size) { TextView v = new TextView(this); v.setText(text); v.setTextSize(size); v.setTextColor(0xffffffff); v.setGravity(Gravity.CENTER); v.setPadding(20, 18, 20, 18); return v; }
+    TextView label(String text, int size) {
+        TextView v = new TextView(this);
+        v.setText(text);
+        v.setTextSize(size);
+        v.setTextColor(theme == null ? 0xffffffff : theme.textPrimary);
+        v.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        v.setGravity(Gravity.CENTER);
+        v.setPadding(20, 18, 20, 18);
+        return v;
+    }
+
+    TextView heading(String text, int size) {
+        TextView v = label(text, size);
+        v.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        v.setLetterSpacing(0.01f);
+        v.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        return v;
+    }
+
+    /** "The" in ink plus "Gallery" in the iiSU-style warm-to-pink gradient. */
+    private View brand() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView article = label("The", 17);
+        article.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        article.setLetterSpacing(0.05f);
+        article.setPadding(0, 0, dp(6), 0);
+        TextView name = label("Gallery", 17);
+        name.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+        name.setLetterSpacing(0.05f);
+        name.setPadding(0, 0, 0, 0);
+        row.addView(article);
+        row.addView(name);
+        name.post(() -> {
+            if (name.getWidth() == 0) return;
+            name.getPaint().setShader(new LinearGradient(0, 0, name.getWidth(), 0,
+                    new int[]{theme.accentWarm, theme.accent}, null, Shader.TileMode.CLAMP));
+            name.invalidate();
+        });
+        return row;
+    }
+
+    private LinearLayout surfacePill() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(8), dp(16), dp(8));
+        row.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
+        row.setElevation(dp(4));
+        row.setClipToOutline(true);
+        return row;
+    }
+
+    /** Focusable glass pill used for touch and controller actions. */
+    private View actionPill(String iconName, String caption) {
+        LinearLayout row = surfacePill();
+        row.setFocusable(true);
+        row.setFocusableInTouchMode(true);
+        row.setOnFocusChangeListener((v, focused) -> v.setBackground(focused
+                ? theme.selection(1000f, theme.surface, 2f)
+                : theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline)));
+        ImageView glyph = icon(iconName);
+        LinearLayout.LayoutParams glyphParams = new LinearLayout.LayoutParams(dp(22), dp(22));
+        glyphParams.rightMargin = dp(8);
+        row.addView(glyph, glyphParams);
+        TextView text = label(caption, 15);
+        text.setPadding(0, 0, 0, 0);
+        row.addView(text);
+        return row;
+    }
 
     void pickFolder() {
         resetButtonHoldForUiChange();
@@ -307,26 +403,61 @@ public final class MainActivity extends Activity {
         if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settingsActions.clear();
         root.removeAllViews();
+        root.setBackground(theme.backdrop());
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.setPadding(dp(32), dp(12), dp(32), dp(12));
-        page.setBackgroundColor(0xff181a1d);
-        TextView heading = label("Settings", 28);
-        page.addView(heading, new LinearLayout.LayoutParams(-1, -2));
-        TextView category = label("Sources", 21);
-        category.setGravity(Gravity.CENTER_VERTICAL);
+        page.setPadding(dp(48), dp(20), dp(48), dp(96));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = heading("Settings", 30);
+        title.setPadding(0, 0, 0, 0);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(brand());
+        page.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView subtitle = label("Choose the folders The Gallery reads images from.", 14);
+        subtitle.setGravity(Gravity.LEFT);
+        subtitle.setTextColor(theme.textSecondary);
+        subtitle.setPadding(0, dp(2), 0, 0);
+        page.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView category = label("SOURCES", 11);
+        category.setGravity(Gravity.LEFT);
+        category.setTextColor(theme.textMuted);
+        category.setLetterSpacing(0.16f);
+        category.setPadding(0, dp(16), 0, dp(4));
         page.addView(category, new LinearLayout.LayoutParams(-1, -2));
+
         for (int i = 0; i < sources.size(); i++) {
             final Uri source = sources.get(i);
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            TextView name = label(source.getLastPathSegment() == null ? source.toString() : source.getLastPathSegment(), 17);
-            name.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.HORIZONTAL);
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setPadding(dp(18), dp(12), dp(12), dp(12));
+            card.setBackground(theme.bordered(theme.surface, 16f, 1f, theme.outline));
+            card.setElevation(dp(2));
+            View dot = new View(this);
+            dot.setBackground(theme.dot());
+            LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(10), dp(10));
+            dotParams.rightMargin = dp(14);
+            card.addView(dot, dotParams);
+            TextView name = label(source.getLastPathSegment() == null ? source.toString() : source.getLastPathSegment(), 16);
+            name.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
             name.setSingleLine(true);
-            row.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-            TextView remove = label("Remove", 17);
-            focusable(remove);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            card.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+            TextView remove = label("Remove", 14);
+            remove.setTextColor(theme.textPrimary);
+            remove.setPadding(dp(16), dp(7), dp(16), dp(7));
+            remove.setBackground(theme.pill(theme.surfaceAlt));
+            remove.setFocusable(true);
+            remove.setFocusableInTouchMode(true);
+            remove.setOnFocusChangeListener((v, focused) -> {
+                v.setBackground(focused ? theme.selection(1000f, theme.surface, 2f) : theme.pill(theme.surfaceAlt));
+                v.setElevation(dp(focused ? 4 : 0));
+            });
             settingsActions.add(remove);
             remove.setOnClickListener(v -> {
                 sources.remove(source); sourcesDirty = true;
@@ -335,20 +466,55 @@ public final class MainActivity extends Activity {
                 else folder = sources.get(0);
                 showSettings();
             });
-            row.addView(remove);
-            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
-            rowParams.topMargin = dp(6);
-            page.addView(row, rowParams);
+            card.addView(remove);
+            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+            cardParams.topMargin = dp(8);
+            page.addView(card, cardParams);
         }
-        TextView add = label("Add source", 20);
-        focusable(add);
+
+        LinearLayout add = new LinearLayout(this);
+        add.setOrientation(LinearLayout.HORIZONTAL);
+        add.setGravity(Gravity.CENTER_VERTICAL);
+        add.setPadding(dp(18), dp(14), dp(18), dp(14));
+        add.setBackground(theme.bordered(theme.surface, 16f, 1f, theme.outline));
+        add.setElevation(dp(2));
+        add.setFocusable(true);
+        add.setFocusableInTouchMode(true);
+        add.setOnFocusChangeListener((v, focused) -> {
+            v.setBackground(focused ? theme.selection(16f, theme.surface, 2f)
+                    : theme.bordered(theme.surface, 16f, 1f, theme.outline));
+            v.setElevation(dp(focused ? 7 : 2));
+        });
+        ImageView plus = icon("switch_plus_96dpi");
+        LinearLayout.LayoutParams plusParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        plusParams.rightMargin = dp(12);
+        add.addView(plus, plusParams);
+        TextView addText = label("Add source", 16);
+        addText.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        addText.setPadding(0, 0, 0, 0);
+        add.addView(addText, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView addHint = label("Folder picker", 13);
+        addHint.setTextColor(theme.textSecondary);
+        addHint.setPadding(0, 0, 0, 0);
+        add.addView(addHint);
         settingsActions.add(add);
         add.setOnClickListener(v -> pickSource());
         LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(-1, -2);
-        addParams.topMargin = dp(6);
+        addParams.topMargin = dp(8);
         page.addView(add, addParams);
-        root.addView(page, new FrameLayout.LayoutParams(-1, -1));
-        settingsFocus = Math.max(0, settingsActions.size() - 1);
+
+        TextView footer = label("Each folder is scanned one level deep.", 13);
+        footer.setGravity(Gravity.LEFT);
+        footer.setTextColor(theme.textMuted);
+        footer.setPadding(0, dp(14), 0, 0);
+        page.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
+        scroll.addView(page, new android.widget.FrameLayout.LayoutParams(-1, -2));
+        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        settingsFocus = 0;
         focusSettingsAction();
         settingsController.onEnter();
     }
@@ -356,16 +522,7 @@ public final class MainActivity extends Activity {
     void focusSettingsAction() {
         if (settingsActions.isEmpty()) return;
         settingsFocus = Math.max(0, Math.min(settingsFocus, settingsActions.size() - 1));
-        View action = settingsActions.get(settingsFocus);
-        action.requestFocus();
-        action.setBackgroundColor(0xff555a60);
-    }
-
-    private void focusable(View view) {
-        view.setFocusable(true);
-        view.setFocusableInTouchMode(true);
-        view.setBackgroundColor(0xff303338);
-        view.setOnFocusChangeListener((v, focused) -> v.setBackgroundColor(focused ? 0xff555a60 : 0xff303338));
+        settingsActions.get(settingsFocus).requestFocus();
     }
 
     private void pickSource() {
@@ -385,19 +542,59 @@ public final class MainActivity extends Activity {
         enterScreen(Screen.GALLERY);
         deleteOverlay = null;
         root.removeAllViews();
+        root.setBackground(theme.backdrop());
         querySourceFileCounts(false);
         startDirectoryCountPolling();
-        LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); layout.setBackgroundColor(0xff181a1d);
-        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
-        View settingsButton = prompt("switch_plus_96dpi", "Settings", 18); settingsButton.setFocusable(true); settingsButton.setOnClickListener(v -> showSettings()); bar.addView(settingsButton);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+
+        FrameLayout bar = new FrameLayout(this);
+        bar.setPadding(dp(22), dp(10), dp(22), dp(2));
+
+        LinearLayout leftGroup = new LinearLayout(this);
+        leftGroup.setOrientation(LinearLayout.HORIZONTAL);
+        leftGroup.setGravity(Gravity.CENTER_VERTICAL);
+        View settingsButton = actionPill("switch_plus_96dpi", "Settings");
+        settingsButton.setOnClickListener(v -> showSettings());
+        leftGroup.addView(settingsButton);
         status = null;
-        refreshIndicator = label("Refreshing…", 13);
+        refreshIndicator = label("Refreshing…", 12);
+        refreshIndicator.setTextColor(theme.textSecondary);
+        refreshIndicator.setBackground(theme.pill(theme.surfaceAlt));
+        refreshIndicator.setPadding(dp(12), dp(5), dp(12), dp(5));
         refreshIndicator.setVisibility(View.GONE);
-        bar.addView(refreshIndicator);
-        summary = label("", 16); summary.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL); bar.addView(summary, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(-2, -2);
+        refreshParams.leftMargin = dp(8);
+        leftGroup.addView(refreshIndicator, refreshParams);
+        bar.addView(leftGroup, new FrameLayout.LayoutParams(-2, -2, Gravity.LEFT | Gravity.CENTER_VERTICAL));
+
+        bar.addView(brand(), new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+
+        summary = label("", 14);
+        summary.setGravity(Gravity.CENTER);
+        summary.setTextColor(theme.textSecondary);
+        summary.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
+        summary.setPadding(dp(16), dp(8), dp(16), dp(8));
+        summary.setElevation(dp(4));
+        summary.setClipToOutline(true);
+        bar.addView(summary, new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
         refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
-        grid = new GridView(this); gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(displayMode == 2 ? 300 : 210)); grid.setNumColumns(gridColumns); grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190)); grid.setHorizontalSpacing(dp(10)); grid.setVerticalSpacing(dp(10)); grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH); grid.setPadding(dp(16), dp(12), dp(16), dp(12)); grid.setClipToPadding(false); grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE); grid.setSelector(new android.graphics.drawable.StateListDrawable()); grid.setDrawSelectorOnTop(false); grid.setAdapter(new PhotoAdapter());
+
+        grid = new GridView(this);
+        gridColumns = gridColumnsFor(displayMode);
+        grid.setNumColumns(gridColumns);
+        grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190));
+        grid.setHorizontalSpacing(dp(12));
+        grid.setVerticalSpacing(dp(12));
+        grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid.setPadding(dp(22), dp(8), dp(22), dp(18));
+        grid.setClipToPadding(false);
+        grid.setClipChildren(false);
+        grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE);
+        grid.setSelector(new android.graphics.drawable.StateListDrawable());
+        grid.setDrawSelectorOnTop(false);
+        grid.setAdapter(new PhotoAdapter());
         grid.setOnItemClickListener((parent, view, position, id) -> { selected = position; openPhoto(); });
         grid.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { selected = position; updateGridHighlight(); }
@@ -411,9 +608,15 @@ public final class MainActivity extends Activity {
         galleryController.onEnter();
     }
 
+    private int gridColumnsFor(int mode) {
+        int available = getResources().getDisplayMetrics().widthPixels - 2 * dp(22);
+        return Math.max(1, available / dp(mode == 2 ? 300 : 210));
+    }
+
     private void refreshSummary() {
         if (summary == null) return;
-        summary.setText(SORTS[sort] + " | " + photos.size() + " images");
+        String count = photos.size() + (photos.size() == 1 ? " image" : " images");
+        summary.setText(SORTS[sort] + "  •  " + count);
     }
 
     private void updateRefreshIndicator(boolean refreshing) {
@@ -424,15 +627,17 @@ public final class MainActivity extends Activity {
         if (grid == null) return;
         int first = grid.getFirstVisiblePosition();
         for (int i = 0; i < grid.getChildCount(); i++) {
-            View child = grid.getChildAt(i);
-            boolean active = first + i == selected;
-            GradientDrawable background = child.getBackground() instanceof GradientDrawable
-                    ? (GradientDrawable) child.getBackground() : new GradientDrawable();
-            background.setColor(0xff35383d);
-            background.setCornerRadius(dp(6));
-            background.setStroke(active ? dp(3) : 0, active ? 0xffaeb3b8 : 0x00000000);
-            if (child.getBackground() != background) child.setBackground(background);
-            if (android.os.Build.VERSION.SDK_INT >= 21) child.setClipToOutline(true);
+            applyTileStyle(grid.getChildAt(i), first + i == selected);
+        }
+    }
+
+    void applyTileStyle(View cell, boolean active) {
+        cell.setBackground(theme.tile(active));
+        cell.setClipToOutline(true);
+        cell.setElevation(dp(active ? 9 : 2));
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            cell.setOutlineSpotShadowColor(active ? theme.glow : 0x33000000);
+            cell.setOutlineAmbientShadowColor(active ? theme.glow : 0x20000000);
         }
     }
 
@@ -446,20 +651,6 @@ public final class MainActivity extends Activity {
         return icon;
     }
 
-    private View prompt(String iconName, String text, int textSize) {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(10), dp(6), dp(10), dp(6));
-        ImageView icon = icon(iconName);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(28), dp(28));
-        iconParams.rightMargin = dp(7);
-        row.addView(icon, iconParams);
-        TextView caption = label(text, textSize);
-        caption.setPadding(0, 0, 0, 0);
-        row.addView(caption);
-        return row;
-    }
-
     private final class PhotoAdapter extends BaseAdapter {
         @Override public int getCount() { return photos.size(); }
         @Override public Object getItem(int p) { return photos.get(p); }
@@ -470,36 +661,38 @@ public final class MainActivity extends Activity {
             if (cell.getChildCount() == 0) {
                 image = new ImageView(MainActivity.this);
                 image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(-1, dp(displayMode == 2 ? 210 : 143), Gravity.TOP);
-                cell.addView(image, imageParams);
+                image.setClipToOutline(true);
+                cell.addView(image, new FrameLayout.LayoutParams(-1, dp(143), Gravity.TOP));
                 TextView name = label("", 13);
-                name.setGravity(Gravity.TOP | Gravity.LEFT);
-                name.setPadding(dp(10), dp(0), dp(10), dp(2));
+                name.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+                name.setPadding(dp(12), dp(1), dp(12), dp(3));
                 name.setMaxLines(2);
                 name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(-1, dp(42), Gravity.BOTTOM);
-                cell.addView(name, lp);
-                TextView metadata = label("", 12);
+                cell.addView(name, new FrameLayout.LayoutParams(-1, dp(40), Gravity.BOTTOM));
+                TextView metadata = label("", 11);
                 metadata.setGravity(Gravity.BOTTOM | Gravity.LEFT);
-                metadata.setPadding(dp(10), 0, dp(10), dp(2));
+                metadata.setPadding(dp(12), 0, dp(12), dp(5));
                 cell.addView(metadata, new FrameLayout.LayoutParams(-1, dp(22), Gravity.BOTTOM));
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); TextView metadata = (TextView) cell.getChildAt(2); Photo photo = photos.get(position); name.setText(photo.name);
             name.setVisibility(displayMode == 0 ? View.GONE : View.VISIBLE);
             metadata.setVisibility(displayMode == 2 ? View.VISIBLE : View.GONE);
             if (displayMode == 2) metadata.setText(imageMetadata(photo));
-            GradientDrawable cellBackground = new GradientDrawable();
-            cellBackground.setColor(0xff35383d);
-            cellBackground.setCornerRadius(dp(6));
-            cell.setBackground(cellBackground);
-            if (android.os.Build.VERSION.SDK_INT >= 21) cell.setClipToOutline(true);
-            int rowHeight = displayMode == 2 ? 270 : displayMode == 0 ? 149 : 187;
+            name.setTextColor(theme.textPrimary);
+            metadata.setTextColor(theme.textSecondary);
+            applyTileStyle(cell, position == selected);
+            int rowHeight = displayMode == 2 ? 276 : displayMode == 0 ? 160 : 190;
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(rowHeight)));
+            image.setBackground(theme.solid(theme.surfaceAlt, Theme.PHOTO_RADIUS_DP));
             FrameLayout.LayoutParams imageParams = (FrameLayout.LayoutParams) image.getLayoutParams();
-            imageParams.setMargins(dp(6), dp(6), dp(6), dp(displayMode == 0 ? 6 : displayMode == 2 ? 66 : 50));
-            imageParams.height = dp(displayMode == 2 ? 210 : 143);
+            imageParams.setMargins(dp(7), dp(7), dp(7), dp(7));
+            imageParams.height = dp(displayMode == 0 ? 146 : displayMode == 2 ? 204 : 143);
             image.setLayoutParams(imageParams);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            FrameLayout.LayoutParams nameParams = (FrameLayout.LayoutParams) name.getLayoutParams();
+            nameParams.height = dp(displayMode == 2 ? 36 : 40);
+            nameParams.bottomMargin = displayMode == 2 ? dp(26) : 0;
+            name.setLayoutParams(nameParams);
         cell.setTag(photo.uri.toString());
         Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
         if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
@@ -542,7 +735,8 @@ public final class MainActivity extends Activity {
         if (photos.isEmpty()) return;
         enterScreen(Screen.VIEWER);
         root.removeAllViews();
-        fullImage = new ImageView(this); fullImage.setBackgroundColor(0xff111315); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
+        root.setBackgroundColor(theme.viewerBackground);
+        fullImage = new ImageView(this); fullImage.setBackgroundColor(theme.viewerBackground); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
@@ -567,7 +761,7 @@ public final class MainActivity extends Activity {
                 if (bitmap == null) return;
                 ImageView incoming = new ImageView(MainActivity.this);
                 incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                incoming.setBackgroundColor(0xff111315);
+                incoming.setBackgroundColor(theme.viewerBackground);
                 incoming.setImageBitmap(bitmap);
                 incoming.setAlpha(0f);
                 root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
@@ -713,7 +907,7 @@ public final class MainActivity extends Activity {
 
     void refreshDisplayModeInGrid() {
         if (grid == null) return;
-        gridColumns = Math.max(1, getResources().getDisplayMetrics().widthPixels / dp(displayMode == 2 ? 300 : 210));
+        gridColumns = gridColumnsFor(displayMode);
         grid.setNumColumns(gridColumns);
         grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190));
         ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
@@ -832,10 +1026,15 @@ public final class MainActivity extends Activity {
     private void showShareUi(Photo photo, String url) {
         enterScreen(Screen.SHARE);
         root.removeAllViews();
-        root.setBackgroundColor(0xff181a1d);
+        root.setBackground(theme.backdrop());
         ImageView background = new ImageView(this);
         background.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{0.71f,0,0,0,0, 0,0.71f,0,0,0, 0,0,0.71f,0,0, 0,0,0,1,0})));
+        float dim = theme.night ? 0.55f : 0.78f;
+        background.setColorFilter(new ColorMatrixColorFilter(new ColorMatrix(new float[]{
+                dim, 0, 0, 0, 0,
+                0, dim, 0, 0, 0,
+                0, 0, dim, 0, 0,
+                0, 0, 0, 1, 0})));
         root.addView(background, new FrameLayout.LayoutParams(-1, -1));
         loader.execute(() -> {
             Bitmap source = decode(photo, 960);
@@ -843,15 +1042,60 @@ public final class MainActivity extends Activity {
             if (backdrop != null) runOnUiThread(() -> { if (current == Screen.SHARE && background.getParent() == root) background.setImageBitmap(backdrop); });
         });
         View scrim = new View(this);
-        scrim.setBackgroundColor(0x33000000);
+        scrim.setBackgroundColor(theme.night ? 0xB3101014 : 0xB8F6F7FB);
         root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setGravity(Gravity.CENTER); content.setPadding(dp(24), dp(10), dp(24), dp(148));
-        content.setBackgroundColor(0x22000000);
-        TextView filename = label(photo.name, 18); filename.setSingleLine(true); content.addView(filename);
-        try { BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240); Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565); for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff111315 : 0xffffffff); ImageView qrView = new ImageView(this); qrView.setImageBitmap(qr); qrView.setScaleType(ImageView.ScaleType.FIT_CENTER); LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(dp(190), dp(190)); qrParams.topMargin = dp(6); qrParams.bottomMargin = dp(6); content.addView(qrView, qrParams); } catch (Exception ignored) { }
-        TextView path = label(url, 16); path.setTextIsSelectable(true); path.setSingleLine(true); path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); path.setPadding(dp(12), dp(6), dp(12), dp(6)); content.addView(path);
-        TextView hint = label("Open on a device on the same Wi-Fi network", 15); content.addView(hint);
-        root.addView(content, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(dp(26), dp(20), dp(26), dp(20));
+        card.setBackground(theme.bordered(theme.surfaceGlass, 24f, 1f, theme.outline));
+        card.setElevation(dp(18));
+        card.setClipToOutline(true);
+        TextView filename = label(photo.name, 17);
+        filename.setSingleLine(true);
+        filename.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        card.addView(filename, new LinearLayout.LayoutParams(-1, -2));
+        TextView subtitle = label("Scan to open this image", 13);
+        subtitle.setTextColor(theme.textSecondary);
+        subtitle.setPadding(0, 0, 0, 0);
+        card.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout qrWell = new LinearLayout(this);
+        qrWell.setGravity(Gravity.CENTER);
+        qrWell.setPadding(dp(12), dp(12), dp(12), dp(12));
+        qrWell.setBackground(theme.solid(0xffffffff, 18f));
+        qrWell.setElevation(dp(3));
+        qrWell.setClipToOutline(true);
+        try {
+            BitMatrix matrix = new MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 240, 240);
+            Bitmap qr = Bitmap.createBitmap(240, 240, Bitmap.Config.RGB_565);
+            for (int y = 0; y < 240; y++) for (int x = 0; x < 240; x++) qr.setPixel(x, y, matrix.get(x, y) ? 0xff13151b : 0xffffffff);
+            ImageView qrView = new ImageView(this);
+            qrView.setImageBitmap(qr);
+            qrView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            qrWell.addView(qrView, new LinearLayout.LayoutParams(dp(168), dp(168)));
+        } catch (Exception ignored) { }
+        LinearLayout.LayoutParams qrParams = new LinearLayout.LayoutParams(-2, -2);
+        qrParams.topMargin = dp(14);
+        card.addView(qrWell, qrParams);
+        TextView path = label(url, 13);
+        path.setTextIsSelectable(true);
+        path.setSingleLine(true);
+        path.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        path.setTextColor(theme.textSecondary);
+        path.setPadding(0, 0, 0, 0);
+        LinearLayout.LayoutParams pathParams = new LinearLayout.LayoutParams(-1, -2);
+        pathParams.topMargin = dp(12);
+        card.addView(path, pathParams);
+        TextView hint = label("Open on a device on the same Wi-Fi network", 12);
+        hint.setTextColor(theme.textMuted);
+        hint.setPadding(0, 0, 0, 0);
+        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(-1, -2);
+        hintParams.topMargin = dp(2);
+        card.addView(hint, hintParams);
+        FrameLayout container = new FrameLayout(this);
+        container.setPadding(0, dp(8), 0, dp(86));
+        container.addView(card, new FrameLayout.LayoutParams(dp(380), -2, Gravity.CENTER));
+        root.addView(container, new FrameLayout.LayoutParams(-1, -1));
         shareController.onEnter();
     }
     void closeShareScreen() { stopShareServer(); showGrid(); }
@@ -864,25 +1108,24 @@ public final class MainActivity extends Activity {
         resetButtonHoldForUiChange();
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable panelBackground = new GradientDrawable();
-        panelBackground.setColor(0xff272b30);
-        panelBackground.setCornerRadius(dp(16));
-        panel.setBackground(panelBackground);
+        panel.setBackground(theme.bordered(theme.surface, 22f, 1f, theme.outline));
+        panel.setElevation(dp(24));
+        panel.setClipToOutline(true);
         TextView message = label("Delete this image?", 20);
-        message.setPadding(dp(24), dp(24), dp(24), dp(20));
+        message.setPadding(dp(26), dp(24), dp(26), dp(20));
         panel.addView(message, new LinearLayout.LayoutParams(-1, -2));
         View divider = new View(this);
-        divider.setBackgroundColor(0xff3a3f46);
+        divider.setBackgroundColor(theme.outline);
         panel.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        View confirm = dialogButton("switch_a_96dpi", "Delete");
-        View cancel = dialogButton("switch_b_96dpi", "Cancel");
+        View confirm = dialogButton("switch_a_96dpi", "Delete", theme.danger);
+        View cancel = dialogButton("switch_b_96dpi", "Cancel", theme.textPrimary);
         row.addView(confirm, new LinearLayout.LayoutParams(0, -2, 1));
         row.addView(cancel, new LinearLayout.LayoutParams(0, -2, 1));
         panel.addView(row, new LinearLayout.LayoutParams(-1, -2));
         FrameLayout overlay = new FrameLayout(this);
-        overlay.setBackgroundColor(0x99000000);
+        overlay.setBackgroundColor(theme.scrim);
         overlay.setClickable(true);
         overlay.setOnClickListener(v -> closeDeleteConfirm());
         overlay.addView(panel, new FrameLayout.LayoutParams(dp(400), -2, Gravity.CENTER));
@@ -903,7 +1146,7 @@ public final class MainActivity extends Activity {
         controllerFor(current).refreshHints();
     }
     /** Dialog action button: controller icon + caption, never focusable so the d-pad cannot select it. */
-    private View dialogButton(String iconName, String text) {
+    private View dialogButton(String iconName, String text, int textColor) {
         LinearLayout button = new LinearLayout(this);
         button.setGravity(Gravity.CENTER);
         button.setPadding(dp(16), dp(18), dp(16), dp(18));
@@ -913,11 +1156,49 @@ public final class MainActivity extends Activity {
         iconParams.rightMargin = dp(8);
         button.addView(icon(iconName), iconParams);
         TextView caption = label(text, 17);
+        caption.setTextColor(textColor);
         caption.setPadding(0, 0, 0, 0);
         button.addView(caption);
         return button;
     }
     private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); controllerFor(current).refreshHints(); } }
+
+    /** System light/dark switch: rebuild the visible screen with the other palette, preserving state. */
+    @Override public void onConfigurationChanged(Configuration config) {
+        super.onConfigurationChanged(config);
+        Theme updated = Theme.of(this);
+        if (updated.night == theme.night) { theme = updated; return; }
+        theme = updated;
+        if (deleteOverlay != null) {
+            View overlay = deleteOverlay;
+            deleteOverlay = null;
+            if (overlay.getParent() == root) root.removeView(overlay);
+        }
+        switch (current) {
+            case SETTINGS:
+                showSettings();
+                break;
+            case VIEWER:
+                rerenderViewer();
+                break;
+            case SHARE:
+                if (!photos.isEmpty() && shareUrl != null) showShareUi(photos.get(selected), shareUrl);
+                else showGrid();
+                break;
+            default:
+                if (sources.isEmpty() && folder == null) empty("Choose a folder to browse images", true);
+                else showGrid();
+                break;
+        }
+    }
+
+    private void rerenderViewer() {
+        if (fullImage == null) { openPhoto(); return; }
+        root.setBackgroundColor(theme.viewerBackground);
+        fullImage.setBackgroundColor(theme.viewerBackground);
+        if (incomingImage != null) incomingImage.setBackgroundColor(theme.viewerBackground);
+        viewerController.refreshHints();
+    }
 
     @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); loader.shutdownNow(); }
 }

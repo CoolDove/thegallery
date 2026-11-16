@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light palette: soft paper background, white cards, vivid coral accent. -->
+    <color name="gallery_background">#F6F7FB</color>
+    <color name="gallery_backdrop_tile">#FCFCFE</color>
+    <color name="gallery_surface">#FFFFFF</color>
+    <color name="gallery_surface_alt">#EEF0F6</color>
+    <color name="gallery_surface_glass">#F2FFFFFF</color>
+    <color name="gallery_outline">#E3E6EF</color>
+    <color name="gallery_outline_strong">#CFD5E3</color>
+    <color name="gallery_text_primary">#13151B</color>
+    <color name="gallery_text_secondary">#6C7387</color>
+    <color name="gallery_text_muted">#98A0B3</color>
+    <color name="gallery_accent">#EC4E86</color>
+    <color name="gallery_accent_warm">#F0872C</color>
+    <color name="gallery_danger">#DC3B44</color>
+    <color name="gallery_scrim">#5910141C</color>
+    <color name="gallery_caption">#F2FFFFFF</color>
+    <color name="gallery_glow">#80FF8AB4</color>
+    <color name="gallery_viewer">#F1F2F7</color>
+</resources>
