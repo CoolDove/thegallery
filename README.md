@@ -32,6 +32,8 @@ The current setup is simple: add image source folders in Settings page, so you c
 
 The Gallery can share selected images over the **local network**, so you can use another device to receive and post them. Most people do not install social apps on their handhelds (at least I don't, to not break the gaming vibe).
 
+![Sharing an image over the local network](screenshots/share_screen.jpg)
+
 If you use your own router, you can assign the handheld a static IP address. Then the sharing address then will always stay the same, so you can bookmark it.
 
 This works pretty well, but I may add other ways to share, in the future.
