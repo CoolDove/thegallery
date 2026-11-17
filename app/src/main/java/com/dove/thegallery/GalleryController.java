@@ -67,10 +67,10 @@ final class GalleryController implements ScreenController {
         boolean holdB = held == KeyEvent.KEYCODE_BUTTON_B || held == KeyEvent.KEYCODE_BACK;
         panel.x(holdX ? "View options" : "Sort", holdX ? MainActivity.LONG_PRESS_MS : 0,
                         () -> activity.scrollGridToEdge(true, false))
-                .y(rangeSelecting ? "Release to apply" : "Hold to select", 0, null)
-                .a(holdA ? "Actions" : activity.hasMultiplePhotoSelection() ? "Cannot view multiple" : "Open", holdA ? MainActivity.LONG_PRESS_MS : 0, null)
-                .b(activity.hasPhotoSelection() ? "Clear selection" : holdB ? "Exit" : "Hold to exit", activity.hasPhotoSelection() ? 0 : holdB ? MainActivity.EXIT_HOLD_DURATION_MS : 0,
-                        () -> activity.scrollGridToEdge(false, false));
+                .y("Select", 0, null)
+                .a(holdA ? "Actions" : "Open", holdA ? MainActivity.LONG_PRESS_MS : 0, null)
+                .b(activity.hasPhotoSelection() ? "Clear" : holdB ? "Exit" : "Hold to exit", activity.hasPhotoSelection() ? 0 : holdB ? MainActivity.EXIT_HOLD_DURATION_MS : 0,
+                        activity.hasPhotoSelection() ? activity::clearPhotoSelection : () -> activity.scrollGridToEdge(false, false));
         return panel;
     }
 
@@ -100,7 +100,10 @@ final class GalleryController implements ScreenController {
                 updateRangePreview();
                 return true;
             }
-            if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) return true;
+            if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
+                if (!down && key == KeyEvent.KEYCODE_BUTTON_A && activity.hasMultiplePhotoSelection()) activity.showCannotViewMultipleHint();
+                return true;
+            }
         }
 
         if (activity.grid != null && isDpadKey(key)) updateChordState();

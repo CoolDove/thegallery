@@ -77,6 +77,9 @@ public final class MainActivity extends Activity {
     GridView grid;
     private TextView status;
     private TextView summary;
+    private TextView photoCountSummary;
+    private TextView selectionSummary;
+    private android.widget.Toast currentToast;
     private Uri folder;
     int selected, sort;
     private final Set<String> selectedPhotoUris = new HashSet<>();
@@ -578,14 +581,22 @@ public final class MainActivity extends Activity {
 
         bar.addView(brand(), new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
 
-        summary = label("", 14);
-        summary.setGravity(Gravity.CENTER);
-        summary.setTextColor(theme.textSecondary);
-        summary.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
-        summary.setPadding(dp(16), dp(8), dp(16), dp(8));
-        summary.setElevation(dp(4));
-        summary.setClipToOutline(true);
-        bar.addView(summary, new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
+        LinearLayout summaryPill = new LinearLayout(this);
+        summaryPill.setGravity(Gravity.CENTER_VERTICAL);
+        summaryPill.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
+        summaryPill.setPadding(dp(16), dp(8), dp(16), dp(8));
+        summaryPill.setElevation(dp(4));
+        summaryPill.setClipToOutline(true);
+        photoCountSummary = label("", 14);
+        photoCountSummary.setTextColor(theme.textSecondary);
+        photoCountSummary.setPadding(0, 0, 0, 0);
+        selectionSummary = label("", 14);
+        selectionSummary.setGravity(Gravity.CENTER_VERTICAL);
+        selectionSummary.setPadding(0, 0, 0, 0);
+        summaryPill.addView(photoCountSummary);
+        summaryPill.addView(selectionSummary);
+        summary = photoCountSummary;
+        bar.addView(summaryPill, new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
         refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
 
@@ -624,7 +635,11 @@ public final class MainActivity extends Activity {
     private void refreshSummary() {
         if (summary == null) return;
         String count = photos.size() + (photos.size() == 1 ? " image" : " images");
-        summary.setText((selectedPhotoUris.isEmpty() ? "" : selectedPhotoUris.size() + " selected  •  ") + SORTS[sort] + "  •  " + count);
+        photoCountSummary.setText(count);
+        selectionSummary.setText(selectedPhotoUris.isEmpty() ? "" : "  ·  " + selectedPhotoUris.size() + " selected");
+        android.text.SpannableString styledSelection = new android.text.SpannableString(selectionSummary.getText());
+        if (!selectedPhotoUris.isEmpty()) styledSelection.setSpan(new android.text.style.ForegroundColorSpan(theme.accent), 0, styledSelection.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        selectionSummary.setText(styledSelection);
     }
 
     private void updateRefreshIndicator(boolean refreshing) {
@@ -648,12 +663,15 @@ public final class MainActivity extends Activity {
     }
 
     private void applyTileStyle(View cell, boolean active, int position) {
-        cell.setBackground(theme.tile(active));
+        boolean preview = galleryController != null && position >= 0 && position < photos.size()
+                && galleryController.isPreviewSelected(photos.get(position).uri.toString());
+        cell.setBackground(preview ? theme.tile(false) : theme.tile(active));
+        if (preview) cell.setAlpha(0.68f); else cell.setAlpha(1f);
         cell.setClipToOutline(true);
-        cell.setElevation(dp(active ? 9 : 2));
+        cell.setElevation(dp(preview ? 2 : active ? 9 : 2));
         if (android.os.Build.VERSION.SDK_INT >= 28) {
-            cell.setOutlineSpotShadowColor(active ? theme.glow : 0x33000000);
-            cell.setOutlineAmbientShadowColor(active ? theme.glow : 0x20000000);
+            cell.setOutlineSpotShadowColor(active && !preview ? theme.glow : 0x33000000);
+            cell.setOutlineAmbientShadowColor(active && !preview ? theme.glow : 0x20000000);
         }
         if (cell instanceof FrameLayout && ((FrameLayout) cell).getChildCount() > 3) {
             TextView marker = (TextView) ((FrameLayout) cell).getChildAt(3);
@@ -696,9 +714,10 @@ public final class MainActivity extends Activity {
                 metadata.setPadding(dp(12), 0, dp(12), dp(5));
                 cell.addView(metadata, new FrameLayout.LayoutParams(-1, dp(22), Gravity.BOTTOM));
                 TextView marker = label("✓", 18);
-                marker.setTextColor(theme.textPrimary);
-                marker.setBackground(theme.selection(1000f, theme.surface, 2f));
-                marker.setPadding(dp(9), dp(3), dp(9), dp(3));
+            marker.setTextColor(theme.accent);
+            marker.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+            marker.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.accent));
+            marker.setPadding(dp(7), 0, dp(7), 0);
                 marker.setElevation(dp(4));
                 FrameLayout.LayoutParams markerParams = new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.TOP);
                 markerParams.setMargins(0, dp(8), dp(8), 0);
@@ -868,7 +887,7 @@ public final class MainActivity extends Activity {
         if (grid == null || photos.isEmpty()) { pickFolder(); return; }
         int focused = grid.getSelectedItemPosition();
         if (focused >= 0) selected = focused;
-        if (selectedPhotoUris.size() > 1) { showPlaceholder("Cannot view multiple images at once"); return; }
+        if (selectedPhotoUris.size() > 1) { showCannotViewMultipleHint(); return; }
         if (selectedPhotoUris.size() == 1) {
             String selectedUri = selectedPhotoUris.iterator().next();
             for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
@@ -971,7 +990,12 @@ public final class MainActivity extends Activity {
 
     /** Cancel any in-progress long press before changing UI state or presenting a modal UI. */
     void resetButtonHoldForUiChange() { interaction.cancelHoldForUiChange(); }
-    private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
+    private void showPlaceholder(String message) {
+        if (currentToast != null) currentToast.cancel();
+        currentToast = android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT);
+        currentToast.show();
+    }
+    void showCannotViewMultipleHint() { showPlaceholder("Cannot view multiple images at once"); }
     void showShareScreen() {
         if (photos.isEmpty()) return;
         resetButtonHoldForUiChange();
