@@ -10,8 +10,7 @@ I love to take screenshots when play games. But many gallery apps cannot be full
 
 Follow the prompts in the lower-right corner. Short presses handle common actions; some actions live in hold menus, you can try to hold buttons.
 
-![grid](screenshots/gallery-grid.png)
-![hold menu](screenshots/image.png)
+![galley screens](screenshots/image.png)
 
 If the hold delay feels too long, press the corresponding D-pad direction as soon as you start holding the button. It responds as well. Yes, you actually do not need to wait for the D-pad wheel hint to appear.
 
