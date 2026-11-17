@@ -138,6 +138,19 @@ final class InteractionSystem {
 
     int heldKey() { return heldKey; }
 
+    /** Consume the pending long-press transition when an early chord opens its wheel. */
+    void completeHoldProgress() {
+        holdLongPressed = true;
+        if (holdLongPressRunnable != null) handler.removeCallbacks(holdLongPressRunnable);
+        holdLongPressRunnable = null;
+
+        long duration = 0;
+        for (HoldRingTarget target : holdRingTargets) duration = Math.max(duration, target.duration);
+        heldSince = SystemClock.uptimeMillis() - duration;
+        for (HoldRingTarget target : holdRingTargets) target.ring.setProgress(1f);
+        stopRingTicker();
+    }
+
     private void cancelHoldState() {
         if (holdHintRunnable != null) handler.removeCallbacks(holdHintRunnable);
         if (holdLongPressRunnable != null) handler.removeCallbacks(holdLongPressRunnable);
