@@ -65,7 +65,7 @@ final class GalleryController implements ScreenController {
         boolean holdA = held == KeyEvent.KEYCODE_BUTTON_A;
         boolean holdX = held == KeyEvent.KEYCODE_BUTTON_X;
         boolean holdB = held == KeyEvent.KEYCODE_BUTTON_B || held == KeyEvent.KEYCODE_BACK;
-        panel.x(holdX ? "View options" : "", holdX ? MainActivity.LONG_PRESS_MS : 0,
+        panel.x(holdX ? "View options" : "Sort", holdX ? MainActivity.LONG_PRESS_MS : 0,
                         () -> activity.scrollGridToEdge(true, false))
                 .y("Select", 0, null)
                 .a(holdA ? "Actions" : "Open", holdA ? MainActivity.LONG_PRESS_MS : 0, null)

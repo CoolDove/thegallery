@@ -1185,10 +1185,10 @@ public final class MainActivity extends Activity {
                     if (current != Screen.SHARE || generation != shareBackdropGeneration || background.getParent() != root) return;
                     int next = (shareBackdropIndex + 1) % sharePhotos.size();
                     setShareBackdrop(background, sharePhotos, generation, next);
-                    handler.postDelayed(this, 3500);
+                    handler.postDelayed(this, 2000);
                 }
             };
-            handler.postDelayed(shareBackdropCycle, 3500);
+            handler.postDelayed(shareBackdropCycle, 2000);
         }
         View scrim = new View(this);
         scrim.setBackgroundColor(theme.night ? 0xB3101014 : 0xB8F6F7FB);
