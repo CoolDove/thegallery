@@ -4,7 +4,9 @@
 
 # The Gallery
 
-An image gallery for Android handhelds. The code was entirely vibe-coded with AI. Apart from the design and this README, there is hardly any human work in this project. So I sincerely suggest you read the README first.
+An image gallery for gaming Android handhelds.
+
+_The code was entirely vibe-coded with AI. Apart from the design and this README, there is hardly any human work in this project. So I sincerely suggest you read the README first._
 
 ## Why
 
