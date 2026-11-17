@@ -301,6 +301,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (generation != refreshGeneration) return;
                 photos.clear(); photos.addAll(found);
+                cache.evictAll();
                 HashSet<String> availableUris = new HashSet<>();
                 for (Photo photo : photos) availableUris.add(photo.uri.toString());
                 selectedPhotoUris.retainAll(availableUris);
@@ -788,7 +789,17 @@ public final class MainActivity extends Activity {
                 finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(photo.uri.toString()); }
                 Bitmap result = b;
                 runOnUiThread(() -> {
-                    if (result == null || grid == null) return;
+                    if (grid == null) return;
+                    if (result == null) {
+                        int visibleFirst = grid.getFirstVisiblePosition();
+                        View visibleChild = grid.getChildAt(position - visibleFirst);
+                        if (visibleChild instanceof FrameLayout && photo.uri.toString().equals(visibleChild.getTag())) {
+                            ImageView failedImage = (ImageView) ((FrameLayout) visibleChild).getChildAt(0);
+                            failedImage.setImageResource(android.R.drawable.ic_menu_report_image);
+                            failedImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+                        }
+                        return;
+                    }
                     int first = grid.getFirstVisiblePosition(); View child = grid.getChildAt(position - first);
                     if (child instanceof FrameLayout && photo.uri.toString().equals(child.getTag())) { FrameLayout targetCell = (FrameLayout) child; ((ImageView)targetCell.getChildAt(0)).setImageBitmap(result); if (displayMode == 2) ((TextView)targetCell.getChildAt(2)).setText(imageMetadata(photo)); }
                 });
@@ -799,10 +810,19 @@ public final class MainActivity extends Activity {
     }
 
     private Bitmap decode(Photo photo, int target) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
         try (InputStream in = getContentResolver().openInputStream(photo.uri)) {
-            BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true; BitmapFactory.decodeStream(in, null, bounds);
-            int sample = 1; while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
-            try (InputStream image = getContentResolver().openInputStream(photo.uri)) { BitmapFactory.Options opts = new BitmapFactory.Options(); opts.inSampleSize = sample; return BitmapFactory.decodeStream(image, null, opts); }
+            if (in == null) return null;
+            BitmapFactory.decodeStream(in, null, bounds);
+        } catch (Exception ignored) { return null; }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        int sample = 1;
+        while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+            return image == null ? null : BitmapFactory.decodeStream(image, null, options);
         } catch (Exception ignored) { return null; }
     }
 
