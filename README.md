@@ -4,37 +4,41 @@
 
 # The Gallery
 
-An image gallery for Android handhelds. The code was entirely vibe coded with AI; apart from the interaction design and this README, there is hardly any human work in this project.
+An image gallery for Android handhelds. The code was entirely vibe-coded with AI. Apart from the design and this README, there is hardly any human work in this project. So I sincerely suggest you read the README first.
 
 ## Why
 
-I love to take screenshots when play games. But many gallery apps cannot be fully operated with a game controller: you are constantly forced to reach for the touchscreen; and they often come with annoying media-management rules. So I made a gallery that can be operated **entirely with a controller**, **no more touchscreen**.
+I love to take screenshots when playing games. But many gallery apps are not good with a handheld device:
+- They cannot be fully operated with a game controller, you are constantly forced to reach for the touchscreen.
+- They often come with annoying media-management rules, while I just want to view pictures in a few specific directories.
+
+So I made a gallery app that can be operated **entirely with a controller**, **no more touchscreen**.
 
 ## Use
 
-Follow the prompts in the lower-right corner. Presses XYAB can perform some common actions, holding them may open a radial menu with some other actions or toggles.
+Follow the prompts in the lower-right corner. Presses X/Y/A/B can perform some common actions, holding them opens a radial menu with some other actions or toggles.
 
-![galley screens](screenshots/image.png)
+![gallery screens](screenshots/image.png)
 
-If you feel the holding delay too long, you actually don't need to wait for the wheel shows up, you can input direction immediately after you start holding.
+If you feel the holding delay is too long, you don't actually need to wait for the wheel to show up, you can input direction immediately after you start holding.
 
 Some actions are a little hidden: hold **Up** then press **X** to jump to the top, or hold **Down** then press **B** to jump to the bottom. This feels intuitive on a Nintendo Switch layout. I might tweak the scheme for other button layouts in the future.
 
-_The control style is designed to make it feels like a game, I hope it feels good to you._
+_The control style is designed to make it feel like a game, I hope it feels good to you._
 
-## Managing Your Gallery
+## Gallery Management
 
-The current setup is simple: add image source folders in Settings page, so you can combine screenshots from multiple emulators. **The folders are not scanned recursively, for now.**
+The current setup is simple: add image source folders in Settings page, so you can combine screenshots from multiple emulators. **The folders are _not_ scanned recursively, for now.**
 
 ![settings](screenshots/settings_screen.png)
 
 ## Sharing Images
 
-The Gallery can share selected images over the **local network**, so you can use another device to receive and post them. Most people do not install social apps on their handhelds (at least I don't, to not break the gaming vibe).
+We can share selected images over the **local network**, so you can use another device to receive and post them. Most people do not install social apps on their handhelds (at least I don't, to not break the gaming vibe).
 
 ![share](screenshots/share_screen.jpg)
 
-If you use your own router, you can assign the handheld a static IP address. Then the sharing address then will always stay the same, so you can bookmark it.
+If you use your own router, you can assign the handheld a static IP address. Then the sharing address will always stay the same, so that you can bookmark it.
 
 This works pretty well, but I may add other ways to share, in the future.
 
