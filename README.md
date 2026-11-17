@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="screenshots/app_icon.png" width="140" alt="The Gallery app icon">
+</p>
+
 # The Gallery
 
 An image gallery for Android handhelds. The code was entirely vibe coded with AI; apart from the interaction design and this README, there is hardly any human work in this project.
