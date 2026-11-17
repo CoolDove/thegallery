@@ -91,7 +91,7 @@ public final class MainActivity extends Activity {
     private boolean scanInProgress;
     private TextView refreshIndicator;
     private long refreshGeneration;
-    private final HashMap<String, String> sourceFileSignatures = new HashMap<>();
+    private final HashMap<String, Integer> sourceFileCounts = new HashMap<>();
     private boolean countQueryInProgress;
     private Runnable directoryCountPoll;
     final ArrayList<View> settingsActions = new ArrayList<>();
@@ -312,6 +312,7 @@ public final class MainActivity extends Activity {
                     for (int i = 0; i < photos.size(); i++) if (selectedPhotoUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
                 }
                 scanInProgress = false;
+                boolean refreshAgain = sourcesDirty;
                 sourcesDirty = false;
                 if (current == Screen.GALLERY) {
                     if (grid == null || !grid.isAttachedToWindow()) {
@@ -324,7 +325,7 @@ public final class MainActivity extends Activity {
                     }
                 }
                 updateRefreshIndicator(false);
-                if (sourcesDirty && current == Screen.GALLERY) { sourcesDirty = false; scan(); }
+                if (refreshAgain && current == Screen.GALLERY) scan();
             });
         });
     }
@@ -363,35 +364,27 @@ public final class MainActivity extends Activity {
         countQueryInProgress = true;
         ArrayList<Uri> snapshot = new ArrayList<>(sources);
         loader.execute(() -> {
-            HashMap<String, String> queriedSignatures = new HashMap<>();
+            HashMap<String, Integer> queriedCounts = new HashMap<>();
             for (Uri source : snapshot) {
                 try {
                     String id = DocumentsContract.getTreeDocumentId(source);
                     Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
-                    ArrayList<String> entries = new ArrayList<>();
+                    int count = 0;
                     try (android.database.Cursor cursor = getContentResolver().query(children,
-                            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                                    DocumentsContract.Document.COLUMN_MIME_TYPE,
-                                    DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
-                        if (cursor != null) while (cursor.moveToNext()) {
-                            String mime = cursor.getString(1);
-                            if (mime != null && mime.startsWith("image/")) {
-                                entries.add(cursor.getString(0) + ":" + cursor.getLong(2));
-                            }
-                        }
+                            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
+                        if (cursor != null) count = cursor.getCount();
                     }
-                    Collections.sort(entries);
-                    queriedSignatures.put(source.toString(), entries.toString());
+                    queriedCounts.put(source.toString(), count);
                 } catch (Exception ignored) { }
             }
             runOnUiThread(() -> {
                 countQueryInProgress = false;
                 boolean changed = false;
                 for (Uri source : snapshot) {
-                    String signature = queriedSignatures.get(source.toString());
-                    if (signature == null) continue;
-                    String previous = sourceFileSignatures.put(source.toString(), signature);
-                    if (previous != null && !previous.equals(signature)) changed = true;
+                    Integer count = queriedCounts.get(source.toString());
+                    if (count == null) continue;
+                    Integer previous = sourceFileCounts.put(source.toString(), count);
+                    if (previous != null && !previous.equals(count)) changed = true;
                 }
                 if (changed && refreshOnChange && current == Screen.GALLERY) requestRefresh(false);
             });
