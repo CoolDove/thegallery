@@ -20,6 +20,10 @@ final class GalleryController implements ScreenController {
     private int[] wheelActions;
     private int[] wheelToggles;
     private boolean wheelUsesFaceButton;
+    private boolean rangeSelecting;
+    private int rangeAnchor = -1;
+    private boolean rangeRemove;
+    private final java.util.HashSet<String> rangePreview = new java.util.HashSet<>();
 
     GalleryController(MainActivity activity, InteractionSystem interaction) {
         this.activity = activity;
@@ -65,8 +69,8 @@ final class GalleryController implements ScreenController {
                         () -> activity.scrollGridToEdge(true, false))
                 .y("Select", 0, null)
                 .a(holdA ? "Actions" : "Open", holdA ? MainActivity.LONG_PRESS_MS : 0, null)
-                .b(holdB ? "Exit" : "Hold to exit", holdB ? MainActivity.EXIT_HOLD_DURATION_MS : 0,
-                        () -> activity.scrollGridToEdge(false, false));
+                .b(activity.hasPhotoSelection() ? "Clear" : holdB ? "Exit" : "Hold to exit", activity.hasPhotoSelection() ? 0 : holdB ? MainActivity.EXIT_HOLD_DURATION_MS : 0,
+                        activity.hasPhotoSelection() ? activity::clearPhotoSelection : () -> activity.scrollGridToEdge(false, false));
         return panel;
     }
 
@@ -79,6 +83,28 @@ final class GalleryController implements ScreenController {
 
         boolean down = action == KeyEvent.ACTION_DOWN;
         boolean gridReady = activity.grid != null && !activity.photos.isEmpty();
+
+        if (key == KeyEvent.KEYCODE_BUTTON_Y && action == KeyEvent.ACTION_UP && rangeSelecting) {
+            activity.applyRangeSelection(rangePreview, rangeRemove);
+            rangeSelecting = false;
+            rangeAnchor = -1;
+            rangePreview.clear();
+            activity.updateGridHighlight();
+            refreshHints();
+            return true;
+        }
+        if (rangeSelecting) {
+            if (!down && key == KeyEvent.KEYCODE_BUTTON_Y) return true;
+            if (isDpadKey(key)) {
+                if (down && event.getRepeatCount() == 0 && gridReady) activity.moveGridSelection(key);
+                updateRangePreview();
+                return true;
+            }
+            if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
+                if (!down && key == KeyEvent.KEYCODE_BUTTON_A && activity.hasMultiplePhotoSelection()) activity.showCannotViewMultipleHint();
+                return true;
+            }
+        }
 
         if (activity.grid != null && isDpadKey(key)) updateChordState();
 
@@ -97,10 +123,17 @@ final class GalleryController implements ScreenController {
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
             if (down) {
                 if (event.getRepeatCount() == 0) {
+                    if (!activity.selectedPhotoUrisEmpty()) {
+                        cancelBHoldHint();
+                        activity.clearPhotoSelection();
+                        refreshHints();
+                        return true;
+                    }
                     interaction.beginHold(key, MainActivity.HOLD_HINT_DELAY_MS, 0, MainActivity.EXIT_HOLD_DURATION_MS,
                             this::refreshHints, null, activity::finish);
                 }
             } else if (action == KeyEvent.ACTION_UP) {
+                if (!activity.selectedPhotoUrisEmpty()) { refreshHints(); return true; }
                 boolean initiated = interaction.heldKey() == key;
                 InteractionSystem.HoldResult result = interaction.endHold(key);
                 if (initiated && !result.longPressed && !result.hintReached && !activity.hasFolder()) activity.pickFolder();
@@ -125,7 +158,16 @@ final class GalleryController implements ScreenController {
             activity.showSettings();
             return true;
         }
-        if (key == KeyEvent.KEYCODE_BUTTON_Y) return true;
+        if (key == KeyEvent.KEYCODE_BUTTON_Y) {
+            if (down && event.getRepeatCount() == 0 && gridReady) {
+                rangeSelecting = true;
+                rangeAnchor = activity.selected;
+                rangeRemove = activity.isPhotoSelected(rangeAnchor);
+                updateRangePreview();
+                refreshHints();
+            }
+            return true;
+        }
 
         if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X) {
             if (down) {
@@ -158,6 +200,25 @@ final class GalleryController implements ScreenController {
         }
         return false;
     }
+
+    private void updateRangePreview() {
+        rangePreview.clear();
+        int end = activity.selected;
+        int start = rangeAnchor;
+        if (start < 0 || end < 0) return;
+        for (int i = Math.min(start, end); i <= Math.max(start, end); i++) {
+            String uri = activity.photoUriAt(i);
+            if (uri != null) rangePreview.add(uri);
+        }
+
+        activity.updateGridHighlight();
+    }
+
+    private void cancelBHoldHint() {
+        if (interaction.heldKey() == KeyEvent.KEYCODE_BUTTON_B || interaction.heldKey() == KeyEvent.KEYCODE_BACK) interaction.cancelHold();
+    }
+
+    boolean isPreviewSelected(String uri) { return rangeSelecting && uri != null && rangePreview.contains(uri); }
 
     private void updateChordState() {
         boolean top = interaction.isPressed(KeyEvent.KEYCODE_DPAD_UP) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_LEFT);

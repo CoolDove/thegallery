@@ -77,8 +77,12 @@ public final class MainActivity extends Activity {
     GridView grid;
     private TextView status;
     private TextView summary;
+    private TextView photoCountSummary;
+    private TextView selectionSummary;
+    private android.widget.Toast currentToast;
     private Uri folder;
     int selected, sort;
+    private final Set<String> selectedPhotoUris = new HashSet<>();
     private ServerSocket shareServer;
     private Thread shareThread;
     private String shareUrl;
@@ -95,6 +99,9 @@ public final class MainActivity extends Activity {
     private int gridColumns = 1;
     private ImageView fullImage;
     private ImageView incomingImage;
+    private Runnable shareBackdropCycle;
+    private int shareBackdropIndex;
+    private long shareBackdropGeneration;
     private int photoTransition;
     private Runnable photoExitRunnable;
     private View deleteOverlay;
@@ -299,9 +306,16 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (generation != refreshGeneration) return;
                 photos.clear(); photos.addAll(found);
+                HashSet<String> availableUris = new HashSet<>();
+                for (Photo photo : photos) availableUris.add(photo.uri.toString());
+                selectedPhotoUris.retainAll(availableUris);
                 sortPhotos();
                 selected = 0;
                 if (selectedUri != null) for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
+                if (selectedPhotoUris.size() == 1) {
+                    String selectedPhotoUri = selectedPhotoUris.iterator().next();
+                    for (int i = 0; i < photos.size(); i++) if (selectedPhotoUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
+                }
                 scanInProgress = false;
                 sourcesDirty = false;
                 if (current == Screen.GALLERY) {
@@ -557,6 +571,22 @@ public final class MainActivity extends Activity {
         View settingsButton = actionPill("switch_plus_96dpi", "Settings");
         settingsButton.setOnClickListener(v -> showSettings());
         leftGroup.addView(settingsButton);
+        TextView sortButton = label(SORTS[sort], 14);
+        sortButton.setTextColor(theme.textSecondary);
+        sortButton.setPadding(dp(12), dp(7), dp(12), dp(7));
+        sortButton.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
+        sortButton.setElevation(dp(4));
+        sortButton.setFocusable(true);
+        sortButton.setOnFocusChangeListener((view, focused) -> view.setBackground(focused
+                ? theme.selection(1000f, theme.surface, 2f)
+                : theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline)));
+        sortButton.setOnClickListener(view -> {
+            applySortFromWheel();
+            sortButton.setText(SORTS[sort]);
+        });
+        LinearLayout.LayoutParams sortParams = new LinearLayout.LayoutParams(-2, -2);
+        sortParams.leftMargin = dp(8);
+        leftGroup.addView(sortButton, sortParams);
         status = null;
         refreshIndicator = label("Refreshing…", 12);
         refreshIndicator.setTextColor(theme.textSecondary);
@@ -570,14 +600,22 @@ public final class MainActivity extends Activity {
 
         bar.addView(brand(), new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
 
-        summary = label("", 14);
-        summary.setGravity(Gravity.CENTER);
-        summary.setTextColor(theme.textSecondary);
-        summary.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
-        summary.setPadding(dp(16), dp(8), dp(16), dp(8));
-        summary.setElevation(dp(4));
-        summary.setClipToOutline(true);
-        bar.addView(summary, new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
+        LinearLayout summaryPill = new LinearLayout(this);
+        summaryPill.setGravity(Gravity.CENTER_VERTICAL);
+        summaryPill.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
+        summaryPill.setPadding(dp(16), dp(8), dp(16), dp(8));
+        summaryPill.setElevation(dp(4));
+        summaryPill.setClipToOutline(true);
+        photoCountSummary = label("", 14);
+        photoCountSummary.setTextColor(theme.textSecondary);
+        photoCountSummary.setPadding(0, 0, 0, 0);
+        selectionSummary = label("", 14);
+        selectionSummary.setGravity(Gravity.CENTER_VERTICAL);
+        selectionSummary.setPadding(0, 0, 0, 0);
+        summaryPill.addView(photoCountSummary);
+        summaryPill.addView(selectionSummary);
+        summary = photoCountSummary;
+        bar.addView(summaryPill, new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
         refreshSummary();
         layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
 
@@ -616,28 +654,60 @@ public final class MainActivity extends Activity {
     private void refreshSummary() {
         if (summary == null) return;
         String count = photos.size() + (photos.size() == 1 ? " image" : " images");
-        summary.setText(SORTS[sort] + "  •  " + count);
+        photoCountSummary.setText(count);
+        selectionSummary.setText(selectedPhotoUris.isEmpty() ? "" : "  ·  " + selectedPhotoUris.size() + " selected");
+        android.text.SpannableString styledSelection = new android.text.SpannableString(selectionSummary.getText());
+        if (!selectedPhotoUris.isEmpty()) styledSelection.setSpan(new android.text.style.ForegroundColorSpan(theme.accent), 0, styledSelection.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        selectionSummary.setText(styledSelection);
     }
 
     private void updateRefreshIndicator(boolean refreshing) {
         if (refreshIndicator != null) refreshIndicator.setVisibility(refreshing ? View.VISIBLE : View.GONE);
     }
 
-    private void updateGridHighlight() {
+    void updateGridHighlight() {
         if (grid == null) return;
         int first = grid.getFirstVisiblePosition();
         for (int i = 0; i < grid.getChildCount(); i++) {
-            applyTileStyle(grid.getChildAt(i), first + i == selected);
+            View child = grid.getChildAt(i);
+            boolean active = first + i == selected;
+            String uri = first + i >= 0 && first + i < photos.size() ? photos.get(first + i).uri.toString() : null;
+            boolean preview = galleryController != null && galleryController.isPreviewSelected(uri);
+            applyTileStyle(child, active, first + i, preview);
         }
     }
 
     void applyTileStyle(View cell, boolean active) {
+        applyTileStyle(cell, active, -1, false);
+    }
+
+    private void applyTileStyle(View cell, boolean active, int position) {
+        applyTileStyle(cell, active, position, false);
+    }
+
+    private void applyTileStyle(View cell, boolean active, int position, boolean preview) {
         cell.setBackground(theme.tile(active));
+        cell.setAlpha(1f);
         cell.setClipToOutline(true);
         cell.setElevation(dp(active ? 9 : 2));
+        if (cell instanceof FrameLayout && ((FrameLayout) cell).getChildCount() > 4) {
+            View previewFrame = ((FrameLayout) cell).getChildAt(4);
+            previewFrame.setVisibility(preview ? View.VISIBLE : View.GONE);
+            android.graphics.drawable.GradientDrawable outline = new android.graphics.drawable.GradientDrawable();
+            outline.setColor(android.graphics.Color.TRANSPARENT);
+            outline.setCornerRadius(dp((int) Theme.TILE_RADIUS_DP));
+            outline.setStroke(dp(2), (theme.accent & 0x00ffffff) | 0x77000000);
+            previewFrame.setBackground(outline);
+        }
         if (android.os.Build.VERSION.SDK_INT >= 28) {
-            cell.setOutlineSpotShadowColor(active ? theme.glow : 0x33000000);
-            cell.setOutlineAmbientShadowColor(active ? theme.glow : 0x20000000);
+            cell.setOutlineSpotShadowColor(active && !preview ? theme.glow : 0x33000000);
+            cell.setOutlineAmbientShadowColor(active && !preview ? theme.glow : 0x20000000);
+        }
+        if (cell instanceof FrameLayout && ((FrameLayout) cell).getChildCount() > 3) {
+            TextView marker = (TextView) ((FrameLayout) cell).getChildAt(3);
+            boolean chosen = position >= 0 && position < photos.size()
+                    && selectedPhotoUris.contains(photos.get(position).uri.toString());
+            marker.setVisibility(chosen ? View.VISIBLE : View.GONE);
         }
     }
 
@@ -673,6 +743,16 @@ public final class MainActivity extends Activity {
                 metadata.setGravity(Gravity.BOTTOM | Gravity.LEFT);
                 metadata.setPadding(dp(12), 0, dp(12), dp(5));
                 cell.addView(metadata, new FrameLayout.LayoutParams(-1, dp(22), Gravity.BOTTOM));
+                TextView marker = label("✔", 15);
+                marker.setTextColor(0xffffffff);
+                marker.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+                marker.setGravity(Gravity.CENTER);
+                marker.setPadding(0, 0, 0, dp(1));
+                marker.setBackground(theme.dot());
+                marker.setElevation(dp(4));
+                FrameLayout.LayoutParams markerParams = new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.RIGHT | Gravity.TOP);
+                markerParams.setMargins(0, dp(9), dp(9), 0);
+                cell.addView(marker, markerParams);
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); TextView metadata = (TextView) cell.getChildAt(2); Photo photo = photos.get(position); name.setText(photo.name);
             name.setVisibility(displayMode == 0 ? View.GONE : View.VISIBLE);
@@ -680,7 +760,13 @@ public final class MainActivity extends Activity {
             if (displayMode == 2) metadata.setText(imageMetadata(photo));
             name.setTextColor(theme.textPrimary);
             metadata.setTextColor(theme.textSecondary);
-            applyTileStyle(cell, position == selected);
+            boolean preview = galleryController != null && galleryController.isPreviewSelected(photo.uri.toString());
+            if (cell.getChildCount() == 4) {
+                View previewFrame = new View(MainActivity.this);
+                previewFrame.setClickable(false);
+                cell.addView(previewFrame, new FrameLayout.LayoutParams(-1, -1));
+            }
+            applyTileStyle(cell, position == selected, position, preview);
             int rowHeight = displayMode == 2 ? 276 : displayMode == 0 ? 160 : 190;
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(rowHeight)));
             image.setBackground(theme.solid(theme.surfaceAlt, Theme.PHOTO_RADIUS_DP));
@@ -838,8 +924,24 @@ public final class MainActivity extends Activity {
         if (grid == null || photos.isEmpty()) { pickFolder(); return; }
         int focused = grid.getSelectedItemPosition();
         if (focused >= 0) selected = focused;
+        if (selectedPhotoUris.size() > 1) { showCannotViewMultipleHint(); return; }
+        if (selectedPhotoUris.size() == 1) {
+            String selectedUri = selectedPhotoUris.iterator().next();
+            for (int i = 0; i < photos.size(); i++) if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
+        }
         openPhoto();
     }
+
+    String photoUriAt(int position) { return position >= 0 && position < photos.size() ? photos.get(position).uri.toString() : null; }
+    boolean isPhotoSelected(int position) { String uri = photoUriAt(position); return uri != null && selectedPhotoUris.contains(uri); }
+    boolean selectedPhotoUrisEmpty() { return selectedPhotoUris.isEmpty(); }
+    boolean hasPhotoSelection() { return !selectedPhotoUris.isEmpty(); }
+    boolean hasMultiplePhotoSelection() { return selectedPhotoUris.size() > 1; }
+    void applyRangeSelection(Set<String> uris, boolean remove) {
+        if (remove) selectedPhotoUris.removeAll(uris); else selectedPhotoUris.addAll(uris);
+        refreshSummary(); updateGridHighlight();
+    }
+    void clearPhotoSelection() { selectedPhotoUris.clear(); refreshSummary(); updateGridHighlight(); }
 
     void moveGridSelection(int key) {
         if (grid == null || photos.isEmpty()) return;
@@ -897,6 +999,19 @@ public final class MainActivity extends Activity {
             grid.setSelection(selected);
             refreshSummary();
         }
+        refreshSortButtonLabel();
+    }
+
+    private void refreshSortButtonLabel() {
+        if (grid == null || grid.getParent() == null) return;
+        ViewGroup layout = (ViewGroup) grid.getParent();
+        if (layout.getChildCount() == 0 || !(layout.getChildAt(0) instanceof FrameLayout)) return;
+        FrameLayout bar = (FrameLayout) layout.getChildAt(0);
+        if (bar.getChildCount() == 0 || !(bar.getChildAt(0) instanceof LinearLayout)) return;
+        LinearLayout controls = (LinearLayout) bar.getChildAt(0);
+        if (controls.getChildCount() > 1 && controls.getChildAt(1) instanceof TextView) {
+            ((TextView) controls.getChildAt(1)).setText(SORTS[sort]);
+        }
     }
 
     void cycleDisplayModeFromWheel() {
@@ -925,13 +1040,20 @@ public final class MainActivity extends Activity {
 
     /** Cancel any in-progress long press before changing UI state or presenting a modal UI. */
     void resetButtonHoldForUiChange() { interaction.cancelHoldForUiChange(); }
-    private void showPlaceholder(String message) { android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show(); }
+    private void showPlaceholder(String message) {
+        if (currentToast != null) currentToast.cancel();
+        currentToast = android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT);
+        currentToast.show();
+    }
+    void showCannotViewMultipleHint() { showPlaceholder("Cannot view multiple images at once"); }
     void showShareScreen() {
         if (photos.isEmpty()) return;
         resetButtonHoldForUiChange();
         stopShareServer();
         final String token = randomToken();
-        final Photo photo = photos.get(selected);
+        final ArrayList<Photo> sharePhotos = getActionPhotos();
+        if (sharePhotos.isEmpty()) return;
+        final Photo photo = sharePhotos.get(0);
         try {
             ServerSocket server = openShareServer();
             server.setSoTimeout(0);
@@ -939,8 +1061,8 @@ public final class MainActivity extends Activity {
             String address = localAddress();
             if (address == null) throw new java.io.IOException("No LAN address");
             shareUrl = "http://" + address + ":" + server.getLocalPort();
-            showShareUi(photo, shareUrl);
-            shareThread = new Thread(() -> serveShare(server, token, photo), "gallery-share");
+            showShareUi(photo, shareUrl, sharePhotos);
+            shareThread = new Thread(() -> serveShare(server, token, sharePhotos), "gallery-share");
             shareThread.start();
         } catch (Exception e) {
             showPlaceholder("Unable to start local sharing");
@@ -948,7 +1070,7 @@ public final class MainActivity extends Activity {
         }
     }
     private void shareListenerStopped() { if (current == Screen.SHARE) closeShareScreen(); shareServer = null; }
-    private void serveShare(ServerSocket server, String token, Photo photo) {
+    private void serveShare(ServerSocket server, String token, ArrayList<Photo> sharePhotos) {
         while (!server.isClosed()) {
             try (Socket client = server.accept()) {
                 client.setSoTimeout(10000);
@@ -966,11 +1088,27 @@ public final class MainActivity extends Activity {
                 if (!first.startsWith(expected)) {
                     out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
                 } else {
-                    String mime = getContentResolver().getType(photo.uri);
-                    if (mime == null || !mime.startsWith("image/")) mime = "application/octet-stream";
-                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Disposition: attachment; filename=\"" + safeFilename(photo.name) + "\"\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
-                    try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
-                        if (image != null) { byte[] buffer = new byte[32768]; int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) out.write(buffer, 0, count); }
+                    if (sharePhotos.size() == 1) {
+                        Photo photo = sharePhotos.get(0);
+                        String mime = getContentResolver().getType(photo.uri);
+                        if (mime == null || !mime.startsWith("image/")) mime = "application/octet-stream";
+                        out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Disposition: attachment; filename=\"" + safeFilename(photo.name) + "\"\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
+                        try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                            if (image != null) { byte[] buffer = new byte[32768]; int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) out.write(buffer, 0, count); }
+                        }
+                    } else {
+                        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Disposition: attachment; filename=\"gallery-images.zip\"\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
+                        java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(out);
+                        byte[] buffer = new byte[32768];
+                        for (Photo photo : sharePhotos) {
+                            if (server.isClosed()) break;
+                            zip.putNextEntry(new java.util.zip.ZipEntry(safeFilename(photo.name)));
+                            try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                                if (image != null) { int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) zip.write(buffer, 0, count); }
+                            } catch (Exception ignored) { }
+                            zip.closeEntry();
+                        }
+                        zip.finish();
                     }
                     out.flush();
                 }
@@ -1023,7 +1161,9 @@ public final class MainActivity extends Activity {
         scaled.recycle();
         return result;
     }
-    private void showShareUi(Photo photo, String url) {
+    private void showShareUi(Photo photo, String url) { showShareUi(photo, url, Collections.singletonList(photo)); }
+    private void showShareUi(Photo photo, String url, java.util.List<Photo> sharePhotos) {
+        int count = sharePhotos.size();
         enterScreen(Screen.SHARE);
         root.removeAllViews();
         root.setBackground(theme.backdrop());
@@ -1036,11 +1176,20 @@ public final class MainActivity extends Activity {
                 0, 0, dim, 0, 0,
                 0, 0, 0, 1, 0})));
         root.addView(background, new FrameLayout.LayoutParams(-1, -1));
-        loader.execute(() -> {
-            Bitmap source = decode(photo, 960);
-            Bitmap backdrop = source == null ? null : gaussianBlur(source);
-            if (backdrop != null) runOnUiThread(() -> { if (current == Screen.SHARE && background.getParent() == root) background.setImageBitmap(backdrop); });
-        });
+        long generation = ++shareBackdropGeneration;
+        shareBackdropIndex = 0;
+        setShareBackdrop(background, sharePhotos, generation, 0);
+        if (count > 1) {
+            shareBackdropCycle = new Runnable() {
+                @Override public void run() {
+                    if (current != Screen.SHARE || generation != shareBackdropGeneration || background.getParent() != root) return;
+                    int next = (shareBackdropIndex + 1) % sharePhotos.size();
+                    setShareBackdrop(background, sharePhotos, generation, next);
+                    handler.postDelayed(this, 2000);
+                }
+            };
+            handler.postDelayed(shareBackdropCycle, 2000);
+        }
         View scrim = new View(this);
         scrim.setBackgroundColor(theme.night ? 0xB3101014 : 0xB8F6F7FB);
         root.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
@@ -1051,11 +1200,11 @@ public final class MainActivity extends Activity {
         card.setBackground(theme.bordered(theme.surfaceGlass, 24f, 1f, theme.outline));
         card.setElevation(dp(18));
         card.setClipToOutline(true);
-        TextView filename = label(photo.name, 17);
+        TextView filename = label(count > 1 ? "Share " + count + " images" : photo.name, 17);
         filename.setSingleLine(true);
         filename.setEllipsize(android.text.TextUtils.TruncateAt.END);
         card.addView(filename, new LinearLayout.LayoutParams(-1, -2));
-        TextView subtitle = label("Scan to open this image", 13);
+        TextView subtitle = label(count > 1 ? "Scan to download " + count + " images as a ZIP" : "Scan to open this image", 13);
         subtitle.setTextColor(theme.textSecondary);
         subtitle.setPadding(0, 0, 0, 0);
         card.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
@@ -1098,8 +1247,31 @@ public final class MainActivity extends Activity {
         root.addView(container, new FrameLayout.LayoutParams(-1, -1));
         shareController.onEnter();
     }
+    private void setShareBackdrop(ImageView target, java.util.List<Photo> sharePhotos, long generation, int index) {
+        if (sharePhotos.isEmpty()) return;
+        Photo photo = sharePhotos.get(index);
+        loader.execute(() -> {
+            Bitmap source = decode(photo, 960);
+            Bitmap backdrop = source == null ? null : gaussianBlur(source);
+            if (backdrop != null) runOnUiThread(() -> {
+                if (current != Screen.SHARE || generation != shareBackdropGeneration || target.getParent() != root) {
+                    backdrop.recycle();
+                    return;
+                }
+                shareBackdropIndex = index;
+                target.setImageBitmap(backdrop);
+                target.setAlpha(0f);
+                target.animate().alpha(1f).setDuration(650).start();
+            });
+        });
+    }
     void closeShareScreen() { stopShareServer(); showGrid(); }
-    private void stopShareServer() { if (shareServer != null) { try { shareServer.close(); } catch (Exception ignored) { } shareServer = null; } shareUrl = null; }
+    private void stopShareServer() {
+        if (shareBackdropCycle != null) { handler.removeCallbacks(shareBackdropCycle); shareBackdropCycle = null; }
+        shareBackdropGeneration++;
+        if (shareServer != null) { try { shareServer.close(); } catch (Exception ignored) { } shareServer = null; }
+        shareUrl = null;
+    }
     void showDeleteConfirmation() {
         if (photos.isEmpty() || deleteOverlay != null) return;
         // The key that opened this confirm is usually still held; its release must not confirm.
@@ -1111,7 +1283,8 @@ public final class MainActivity extends Activity {
         panel.setBackground(theme.bordered(theme.surface, 22f, 1f, theme.outline));
         panel.setElevation(dp(24));
         panel.setClipToOutline(true);
-        TextView message = label("Delete this image?", 20);
+        int count = getActionPhotos().size();
+        TextView message = label(count > 1 ? "Delete these " + count + " images?" : "Delete this image?", 20);
         message.setPadding(dp(26), dp(24), dp(26), dp(20));
         panel.addView(message, new LinearLayout.LayoutParams(-1, -2));
         View divider = new View(this);
@@ -1161,7 +1334,27 @@ public final class MainActivity extends Activity {
         button.addView(caption);
         return button;
     }
-    private void deleteCurrentPhoto() { try { DocumentsContract.deleteDocument(getContentResolver(), photos.get(selected).uri); photos.remove(selected); sortPhotos(); selected = Math.max(0, Math.min(selected, photos.size() - 1)); showGrid(); } catch (Exception e) { showPlaceholder("Unable to delete image"); controllerFor(current).refreshHints(); } }
+    private ArrayList<Photo> getActionPhotos() {
+        ArrayList<Photo> result = new ArrayList<>();
+        if (!selectedPhotoUris.isEmpty()) {
+            for (Photo photo : photos) if (selectedPhotoUris.contains(photo.uri.toString())) result.add(photo);
+        } else if (!photos.isEmpty()) result.add(photos.get(Math.max(0, Math.min(selected, photos.size() - 1))));
+        return result;
+    }
+    private void deleteCurrentPhoto() {
+        ArrayList<Photo> targets = getActionPhotos();
+        if (targets.isEmpty()) return;
+        int deleted = 0;
+        HashSet<String> deletedUris = new HashSet<>();
+        for (Photo photo : targets) {
+            try { if (DocumentsContract.deleteDocument(getContentResolver(), photo.uri)) { deleted++; deletedUris.add(photo.uri.toString()); selectedPhotoUris.remove(photo.uri.toString()); } }
+            catch (Exception ignored) { }
+        }
+        photos.removeIf(photo -> deletedUris.contains(photo.uri.toString()));
+        selected = Math.max(0, Math.min(selected, photos.size() - 1));
+        showGrid();
+        if (deleted < targets.size()) showPlaceholder("Deleted " + deleted + " of " + targets.size() + " images");
+    }
 
     /** System light/dark switch: rebuild the visible screen with the other palette, preserving state. */
     @Override public void onConfigurationChanged(Configuration config) {
