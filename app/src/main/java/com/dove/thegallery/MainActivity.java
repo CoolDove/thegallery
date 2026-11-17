@@ -654,21 +654,28 @@ public final class MainActivity extends Activity {
             boolean active = first + i == selected;
             String uri = first + i >= 0 && first + i < photos.size() ? photos.get(first + i).uri.toString() : null;
             boolean preview = galleryController != null && galleryController.isPreviewSelected(uri);
-            applyTileStyle(child, active || preview, first + i);
+            applyTileStyle(child, active, first + i, preview);
         }
     }
 
     void applyTileStyle(View cell, boolean active) {
-        applyTileStyle(cell, active, -1);
+        applyTileStyle(cell, active, -1, false);
     }
 
     private void applyTileStyle(View cell, boolean active, int position) {
-        boolean preview = galleryController != null && position >= 0 && position < photos.size()
-                && galleryController.isPreviewSelected(photos.get(position).uri.toString());
-        cell.setBackground(preview ? theme.tile(false) : theme.tile(active));
-        if (preview) cell.setAlpha(0.68f); else cell.setAlpha(1f);
+        applyTileStyle(cell, active, position, false);
+    }
+
+    private void applyTileStyle(View cell, boolean active, int position, boolean preview) {
+        cell.setBackground(theme.tile(active));
+        cell.setAlpha(1f);
         cell.setClipToOutline(true);
-        cell.setElevation(dp(preview ? 2 : active ? 9 : 2));
+        cell.setElevation(dp(active ? 9 : 2));
+        if (cell instanceof FrameLayout) {
+            FrameLayout tile = (FrameLayout) cell;
+            android.graphics.drawable.Drawable background = tile.getBackground();
+            if (preview && background != null) background.setAlpha(105);
+        }
         if (android.os.Build.VERSION.SDK_INT >= 28) {
             cell.setOutlineSpotShadowColor(active && !preview ? theme.glow : 0x33000000);
             cell.setOutlineAmbientShadowColor(active && !preview ? theme.glow : 0x20000000);
@@ -729,7 +736,8 @@ public final class MainActivity extends Activity {
             if (displayMode == 2) metadata.setText(imageMetadata(photo));
             name.setTextColor(theme.textPrimary);
             metadata.setTextColor(theme.textSecondary);
-            applyTileStyle(cell, position == selected, position);
+            boolean preview = galleryController != null && galleryController.isPreviewSelected(photo.uri.toString());
+            applyTileStyle(cell, position == selected, position, preview);
             int rowHeight = displayMode == 2 ? 276 : displayMode == 0 ? 160 : 190;
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(rowHeight)));
             image.setBackground(theme.solid(theme.surfaceAlt, Theme.PHOTO_RADIUS_DP));
