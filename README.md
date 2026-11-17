@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="screenshots/app_icon.png" width="140" alt="The Gallery app icon">
+  <img src="screenshots/app_icon_current.png" width="140" alt="The Gallery app icon">
 </p>
 
 # The Gallery
