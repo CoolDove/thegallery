@@ -671,10 +671,14 @@ public final class MainActivity extends Activity {
         cell.setAlpha(1f);
         cell.setClipToOutline(true);
         cell.setElevation(dp(active ? 9 : 2));
-        if (cell instanceof FrameLayout) {
-            FrameLayout tile = (FrameLayout) cell;
-            android.graphics.drawable.Drawable background = tile.getBackground();
-            if (preview && background != null) background.setAlpha(105);
+        if (cell instanceof FrameLayout && ((FrameLayout) cell).getChildCount() > 4) {
+            View previewFrame = ((FrameLayout) cell).getChildAt(4);
+            previewFrame.setVisibility(preview ? View.VISIBLE : View.GONE);
+            android.graphics.drawable.GradientDrawable outline = new android.graphics.drawable.GradientDrawable();
+            outline.setColor(android.graphics.Color.TRANSPARENT);
+            outline.setCornerRadius(dp((int) Theme.TILE_RADIUS_DP));
+            outline.setStroke(dp(2), (theme.accent & 0x00ffffff) | 0x77000000);
+            previewFrame.setBackground(outline);
         }
         if (android.os.Build.VERSION.SDK_INT >= 28) {
             cell.setOutlineSpotShadowColor(active && !preview ? theme.glow : 0x33000000);
@@ -729,6 +733,10 @@ public final class MainActivity extends Activity {
                 FrameLayout.LayoutParams markerParams = new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.TOP);
                 markerParams.setMargins(0, dp(8), dp(8), 0);
                 cell.addView(marker, markerParams);
+                View previewFrame = new View(MainActivity.this);
+                previewFrame.setClickable(false);
+                previewFrame.setVisibility(View.GONE);
+                cell.addView(previewFrame, new FrameLayout.LayoutParams(-1, -1));
             }
             image = (ImageView) cell.getChildAt(0); TextView name = (TextView) cell.getChildAt(1); TextView metadata = (TextView) cell.getChildAt(2); Photo photo = photos.get(position); name.setText(photo.name);
             name.setVisibility(displayMode == 0 ? View.GONE : View.VISIBLE);
