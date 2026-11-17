@@ -10,21 +10,21 @@ An image gallery for Android handhelds. The code was entirely vibe coded with AI
 
 I love to take screenshots when play games. But many gallery apps cannot be fully operated with a game controller: you are constantly forced to reach for the touchscreen; and they often come with annoying media-management rules. So I made a gallery that can be operated **entirely with a controller**, **no more touchscreen**.
 
-## Controller Controls
+## Use
 
-Follow the prompts in the lower-right corner. Short presses can trigger some common actions, some other actions live in hold menus, you can try to hold buttons.
+Follow the prompts in the lower-right corner. Presses XYAB can perform some common actions, holding them may open a radial menu with some other actions or toggles.
 
 ![galley screens](screenshots/image.png)
 
-If the hold delay feels too long, press the corresponding D-pad direction as soon as you start holding the button. It responds as well. Yes, you actually do not need to wait for the D-pad wheel hint to appear.
+If you feel the holding delay too long, you actually don't need to wait for the wheel shows up, you can input direction immediately after you start holding.
 
-Some actions are a little hidden: hold **Up** and press **X** to jump to the top, or hold **Down** and press **B** to jump to the bottom. This feels intuitive on a Nintendo Switch layout. I might tweak for other button layouts in the future.
+Some actions are a little hidden: hold **Up** then press **X** to jump to the top, or hold **Down** then press **B** to jump to the bottom. This feels intuitive on a Nintendo Switch layout. I might tweak the scheme for other button layouts in the future.
 
-_The operation scheme is designed to feel like a game, I hope it feels good to you._
+_The control style is designed to make it feels like a game, I hope it feels good to you._
 
 ## Managing Your Gallery
 
-The current setup is simple: add image source folders in Settings page, so you can combine screenshots from multiple emulators. **Each folder is not scanned recursively, for now.**
+The current setup is simple: add image source folders in Settings page, so you can combine screenshots from multiple emulators. **The folders are not scanned recursively, for now.**
 
 ![settings](screenshots/settings_screen.png)
 
@@ -32,7 +32,7 @@ The current setup is simple: add image source folders in Settings page, so you c
 
 The Gallery can share selected images over the **local network**, so you can use another device to receive and post them. Most people do not install social apps on their handhelds (at least I don't, to not break the gaming vibe).
 
-![Sharing an image over the local network](screenshots/share_screen.jpg)
+![share](screenshots/share_screen.jpg)
 
 If you use your own router, you can assign the handheld a static IP address. Then the sharing address then will always stay the same, so you can bookmark it.
 
