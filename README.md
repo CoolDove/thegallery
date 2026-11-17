@@ -54,4 +54,6 @@ This works pretty well, but I may add other ways to share, in the future.
 
 **iiSU** is a beautiful and handy launcher app, I've been using it for a long time. I studied its visual style so that using **iiSU** and **The Gallery** together feels more immersive.
 
+---
+
 > May you happy playing games. If you have any problem or suggestion, feel free to open an issue or PR.
