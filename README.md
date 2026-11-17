@@ -30,13 +30,17 @@ _The control style is designed to make it feel like a game, I hope it feels good
 
 The current setup is simple: add image source folders in Settings page, so you can combine screenshots from multiple emulators. **The folders are _not_ scanned recursively, for now.**
 
-<img src="screenshots/settings_screen.png" width="50%" alt="settings">
+<p align="center">
+  <img src="screenshots/settings_screen.png" width="50%" alt="settings">
+</p>
 
 ## Sharing Images
 
 We can share selected images over the **local network**, so you can use another device to receive and post them. Most people do not install social apps on their handhelds (at least I don't, to not break the gaming vibe).
 
-<img src="screenshots/share_screen.jpg" width="50%" alt="share">
+<p align="center">
+  <img src="screenshots/share_screen.jpg" width="50%" alt="share">
+</p>
 
 If you use your own router, you can assign the handheld a static IP address. Then the sharing address will always stay the same, so that you can bookmark it.
 
