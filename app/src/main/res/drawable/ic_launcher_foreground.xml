@@ -64,9 +64,7 @@
         <path android:pathData="M37.20,29.20 H73.20 A7.00,7.00 0 0 1 80.20,36.20 V44.20 A7.00,7.00 0 0 1 73.20,51.20 H37.20 A7.00,7.00 0 0 1 30.20,44.20 V36.20 A7.00,7.00 0 0 1 37.20,29.20 Z"
             android:fillColor="#1A13151B" />
         <path
-            android:pathData="M36.00,28.00 H72.00 A7.00,7.00 0 0 1 79.00,35.00 V43.00 A7.00,7.00 0 0 1 72.00,50.00 H36.00 A7.00,7.00 0 0 1 29.00,43.00 V35.00 A7.00,7.00 0 0 1 36.00,28.00 Z"
-            android:strokeColor="#FFAEB9CC"
-            android:strokeWidth="1.8">
+            android:pathData="M36.00,28.00 H72.00 A7.00,7.00 0 0 1 79.00,35.00 V43.00 A7.00,7.00 0 0 1 72.00,50.00 H36.00 A7.00,7.00 0 0 1 29.00,43.00 V35.00 A7.00,7.00 0 0 1 36.00,28.00 Z">
             <aapt:attr name="android:fillColor">
                 <gradient
                     android:type="linear"
