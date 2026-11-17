@@ -91,7 +91,7 @@ public final class MainActivity extends Activity {
     private boolean scanInProgress;
     private TextView refreshIndicator;
     private long refreshGeneration;
-    private final HashMap<String, Integer> sourceFileCounts = new HashMap<>();
+    private final HashMap<String, String> sourceFileSignatures = new HashMap<>();
     private boolean countQueryInProgress;
     private Runnable directoryCountPoll;
     final ArrayList<View> settingsActions = new ArrayList<>();
@@ -363,27 +363,35 @@ public final class MainActivity extends Activity {
         countQueryInProgress = true;
         ArrayList<Uri> snapshot = new ArrayList<>(sources);
         loader.execute(() -> {
-            HashMap<String, Integer> queriedCounts = new HashMap<>();
+            HashMap<String, String> queriedSignatures = new HashMap<>();
             for (Uri source : snapshot) {
                 try {
                     String id = DocumentsContract.getTreeDocumentId(source);
                     Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(source, id);
-                    int count = 0;
+                    ArrayList<String> entries = new ArrayList<>();
                     try (android.database.Cursor cursor = getContentResolver().query(children,
-                            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID}, null, null, null)) {
-                        if (cursor != null) count = cursor.getCount();
+                            new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                                    DocumentsContract.Document.COLUMN_LAST_MODIFIED}, null, null, null)) {
+                        if (cursor != null) while (cursor.moveToNext()) {
+                            String mime = cursor.getString(1);
+                            if (mime != null && mime.startsWith("image/")) {
+                                entries.add(cursor.getString(0) + ":" + cursor.getLong(2));
+                            }
+                        }
                     }
-                    queriedCounts.put(source.toString(), count);
+                    Collections.sort(entries);
+                    queriedSignatures.put(source.toString(), entries.toString());
                 } catch (Exception ignored) { }
             }
             runOnUiThread(() -> {
                 countQueryInProgress = false;
                 boolean changed = false;
                 for (Uri source : snapshot) {
-                    Integer count = queriedCounts.get(source.toString());
-                    if (count == null) continue;
-                    Integer previous = sourceFileCounts.put(source.toString(), count);
-                    if (previous != null && !previous.equals(count)) changed = true;
+                    String signature = queriedSignatures.get(source.toString());
+                    if (signature == null) continue;
+                    String previous = sourceFileSignatures.put(source.toString(), signature);
+                    if (previous != null && !previous.equals(signature)) changed = true;
                 }
                 if (changed && refreshOnChange && current == Screen.GALLERY) requestRefresh(false);
             });
