@@ -6,6 +6,19 @@ dependencies {
     implementation 'com.google.zxing:core:3.5.3'
 }
 
+def keystoreEnv = System.getenv('DOVE_ANDROID_KEYSTORE')?.trim()
+def keystoreFile = null
+def signingProps = new Properties()
+if (keystoreEnv) {
+    keystoreFile = file(keystoreEnv)
+    if (keystoreFile.isDirectory()) keystoreFile = new File(keystoreFile, 'dove.jks')
+    def signingPropsFile = new File(keystoreFile.parentFile, 'keystore.properties')
+    if (!signingPropsFile.exists()) {
+        throw new GradleException("Missing ${signingPropsFile} for DOVE_ANDROID_KEYSTORE")
+    }
+    signingPropsFile.withInputStream { signingProps.load(it) }
+}
+
 android {
     namespace 'com.dove.thegallery'
     compileSdk 35
@@ -22,6 +35,26 @@ android {
         targetSdk 35
         versionCode 2
         versionName '0.2'
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreFile != null) {
+                storeFile keystoreFile
+                storePassword signingProps['storePassword']
+                keyAlias signingProps['keyAlias']
+                keyPassword signingProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            if (keystoreFile != null) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+        }
     }
 
     compileOptions {
