@@ -141,7 +141,7 @@ public final class MainActivity extends Activity {
         } else if (!getPreferences(0).getString("folder", "").isEmpty()) {
             folder = Uri.parse(getPreferences(0).getString("folder", "")); sources.add(folder); scan();
         }
-        else empty("Choose a folder to browse images", true);
+        else empty("No images here.", true);
     }
 
     private void empty(String text, boolean allowPicker) {
@@ -156,11 +156,6 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-2, -2);
         titleParams.topMargin = dp(18);
         box.addView(title, titleParams);
-        TextView note = label("Your images stay on this device.", 14);
-        note.setTextColor(theme.textSecondary);
-        LinearLayout.LayoutParams noteParams = new LinearLayout.LayoutParams(-2, -2);
-        noteParams.topMargin = dp(2);
-        box.addView(note, noteParams);
         if (allowPicker) {
             View choose = actionPill("switch_plus_96dpi", "Choose folder");
             choose.setOnClickListener(v -> pickFolder());
@@ -499,7 +494,8 @@ public final class MainActivity extends Activity {
                     : theme.bordered(theme.surface, 16f, 1f, theme.outline));
             v.setElevation(dp(focused ? 7 : 2));
         });
-        ImageView plus = icon("switch_plus_96dpi");
+        ImageView plus = icon("ic_add");
+        plus.setColorFilter(theme.textPrimary);
         LinearLayout.LayoutParams plusParams = new LinearLayout.LayoutParams(dp(24), dp(24));
         plusParams.rightMargin = dp(12);
         add.addView(plus, plusParams);
@@ -639,7 +635,7 @@ public final class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
         layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
-        if (photos.isEmpty()) { empty("No images here. Choose another folder.", true); return; }
+        if (photos.isEmpty()) { empty("No images here.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
         grid.setSelection(selected); grid.requestFocus(); grid.post(() -> { if (grid != null) { grid.requestFocus(); updateGridHighlight(); } });
