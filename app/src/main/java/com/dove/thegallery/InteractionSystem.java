@@ -170,6 +170,7 @@ final class InteractionSystem {
         removePromptOverlay();
         if (root == null) return;
         FrameLayout cluster = new FrameLayout(activity);
+        cluster.setClipChildren(false);
         int diameter = dp(CLUSTER_BUTTON_DP);
         int interval = CLUSTER_INTERVAL_DP;
         int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
@@ -188,6 +189,7 @@ final class InteractionSystem {
         removeWheelOverlay();
         removePromptOverlay();
         FrameLayout cluster = new FrameLayout(activity);
+        cluster.setClipChildren(false);
         int diameter = dp(CLUSTER_BUTTON_DP);
         int interval = CLUSTER_INTERVAL_DP;
         int centerX = dp(CLUSTER_CENTER_X_DP), centerY = dp(CLUSTER_HEIGHT_DP) / 2;
@@ -197,8 +199,11 @@ final class InteractionSystem {
         wheelLabels[HintPanel.LEFT] = addWheelButton(cluster, HintPanel.LEFT, panel.dpad[HintPanel.LEFT], centerX - dp(interval), centerY, diameter);
         wheelLabels[HintPanel.RIGHT] = addWheelButton(cluster, HintPanel.RIGHT, panel.dpad[HintPanel.RIGHT], centerX + dp(interval), centerY, diameter);
         FrameLayout overlay = new FrameLayout(activity);
+        overlay.setClipChildren(false);
         View scrim = new View(activity);
-        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0x00000000, 0x59000000, 0x99000000}));
+        int background = activity.theme.background & 0x00FFFFFF;
+        scrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{background, background | 0x99000000, background | 0xE6000000}));
         overlay.addView(scrim, new FrameLayout.LayoutParams(-1, dp(CLUSTER_HEIGHT_DP), Gravity.BOTTOM));
         overlay.addView(cluster, clusterParams(Gravity.LEFT));
         root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
@@ -280,8 +285,11 @@ final class InteractionSystem {
 
     private TextView addCaption(FrameLayout cluster, String caption, int cx, int cy, int diameter, int captionSide) {
         TextView text = activity.label(caption, 12);
-        text.setPadding(dp(4), dp(2), dp(4), dp(2));
-        text.setBackgroundColor(0xcc111315);
+        Theme theme = activity.theme;
+        text.setPadding(dp(8), dp(3), dp(8), dp(3));
+        text.setTextColor(theme.textPrimary);
+        text.setBackground(theme.bordered(theme.caption, 9f, 1f, theme.outline));
+        text.setElevation(dp(3));
         int unspecified = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
         text.measure(unspecified, unspecified);
         int textWidth = text.getMeasuredWidth();
@@ -370,13 +378,14 @@ final class InteractionSystem {
 
         HoldRing() {
             super(activity);
+            Theme theme = activity.theme;
             trackPaint.setStyle(Paint.Style.STROKE);
             trackPaint.setStrokeWidth(dp(3));
-            trackPaint.setColor(0x40ffffff);
+            trackPaint.setColor(theme.night ? 0x40ffffff : 0x33000000);
             progressPaint.setStyle(Paint.Style.STROKE);
             progressPaint.setStrokeWidth(dp(3));
             progressPaint.setStrokeCap(Paint.Cap.ROUND);
-            progressPaint.setColor(0xffffffff);
+            progressPaint.setColor(theme.accent);
         }
 
         void setProgress(float value) {
@@ -403,13 +412,15 @@ final class InteractionSystem {
         DpadIcon(int direction) {
             super(activity);
             this.direction = direction;
+            Theme theme = activity.theme;
             circlePaint.setStyle(Paint.Style.FILL);
-            circlePaint.setColor(0xff384162);
+            circlePaint.setColor(theme.night ? 0xff262b36 : 0xffffffff);
             ringPaint.setStyle(Paint.Style.STROKE);
             ringPaint.setStrokeWidth(dp(2));
-            ringPaint.setColor(0xffd7dde5);
-            armPaint.setColor(0x59d3e1e7);
-            activeArmPaint.setColor(0xffd3e1e7);
+            ringPaint.setColor(theme.night ? 0xffe8edf7 : 0xffc9d2e3);
+            armPaint.setColor(theme.night ? 0x8a77839a : 0xaa9aa6ba);
+            activeArmPaint.setColor(theme.accent);
+            setElevation(dp(2));
         }
 
         @Override protected void onDraw(Canvas canvas) {

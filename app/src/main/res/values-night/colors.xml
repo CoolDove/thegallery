@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark palette: deep graphite background, elevated cards, brighter coral accent. -->
+    <color name="gallery_background">#121419</color>
+    <color name="gallery_backdrop_tile">#191C23</color>
+    <color name="gallery_surface">#1D2027</color>
+    <color name="gallery_surface_alt">#262A33</color>
+    <color name="gallery_surface_glass">#E61D2027</color>
+    <color name="gallery_outline">#2C313B</color>
+    <color name="gallery_outline_strong">#3A4150</color>
+    <color name="gallery_text_primary">#F4F6FB</color>
+    <color name="gallery_text_secondary">#A3ABBC</color>
+    <color name="gallery_text_muted">#757E90</color>
+    <color name="gallery_accent">#FF7FB2</color>
+    <color name="gallery_accent_warm">#FFB86B</color>
+    <color name="gallery_danger">#FF6B70</color>
+    <color name="gallery_scrim">#B3000000</color>
+    <color name="gallery_caption">#E6222630</color>
+    <color name="gallery_glow">#99FF7FB2</color>
+    <color name="gallery_viewer">#0E1014</color>
+</resources>

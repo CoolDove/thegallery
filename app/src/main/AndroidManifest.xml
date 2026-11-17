@@ -5,10 +5,10 @@
         android:label="The Gallery"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.TheGallery">
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
             android:exported="true"
             android:screenOrientation="landscape">
             <intent-filter>
