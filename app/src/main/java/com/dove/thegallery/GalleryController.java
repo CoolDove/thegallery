@@ -202,6 +202,9 @@ final class GalleryController implements ScreenController {
     }
 
     private void openWheel(int heldKey) {
+        // D-pad chord may invoke the wheel before the hold timer reaches its
+        // threshold. Consume that timer first so it cannot replace this wheel
+        // with a second wheel/panel transition a few milliseconds later.
         interaction.completeHoldProgress();
         HintPanel panel = HintPanel.wheel();
         if (heldKey == KeyEvent.KEYCODE_BUTTON_A) {
