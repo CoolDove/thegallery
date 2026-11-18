@@ -901,11 +901,9 @@ public final class MainActivity extends Activity {
         int transition = ++photoTransition;
         ImageView previousImage = fullImage;
         if (photoExitRunnable != null) handler.removeCallbacks(photoExitRunnable);
-        photoExitRunnable = () -> {
-            if (current != Screen.VIEWER || transition != photoTransition) return;
-            fadeOutImage(previousImage);
-        };
-        handler.postDelayed(photoExitRunnable, PHOTO_EXIT_DELAY_MS);
+        photoExitRunnable = null;
+        previousImage.animate().cancel();
+        previousImage.setAlpha(1f);
         Bitmap thumbnail = cache.get(photo.uri.toString());
         fullImage.setImageBitmap(thumbnail);
         Runnable loadOriginal = () -> {
@@ -938,19 +936,33 @@ public final class MainActivity extends Activity {
         incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
         incoming.setBackgroundColor(theme.viewerBackground);
         incoming.setImageBitmap(bitmap);
-        incoming.setAlpha(0f);
+        // Cross-fade from the existing thumbnail; keeping the incoming bitmap opaque
+        // avoids exposing the window/root background between frames.
+        incoming.setAlpha(1f);
         root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
         incomingImage = incoming;
-        incoming.animate().alpha(1f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+        incoming.setVisibility(View.INVISIBLE);
+        incoming.post(() -> {
             if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
                 fadeOutImage(incoming);
                 return;
             }
-            fullImage = incoming;
-            incomingImage = null;
-            fullImage.requestFocus();
-            if (photos.get(selected) != photo) fadeOutImage(incoming);
-        }).start();
+            incoming.setVisibility(View.VISIBLE);
+            ImageView outgoing = fullImage;
+            incoming.setAlpha(0f);
+            incoming.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
+            outgoing.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+                if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
+                    fadeOutImage(incoming);
+                    outgoing.setAlpha(1f);
+                    return;
+                }
+                fullImage = incoming;
+                incomingImage = null;
+                if (outgoing != incoming) root.removeView(outgoing);
+                fullImage.requestFocus();
+            }).start();
+        });
     }
 
     private void fadeOutImage(ImageView image) {
