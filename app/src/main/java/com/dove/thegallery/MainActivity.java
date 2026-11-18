@@ -26,6 +26,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.InputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -55,6 +57,7 @@ public final class MainActivity extends Activity {
     private static final int SHARE_FALLBACK_PORTS = 20;
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
+    private static final int ORIGINAL_CACHE_CAPACITY = 9;
     static final int EXIT_HOLD_DURATION_MS = 1000;
     static final int LONG_PRESS_MS = 550;
     static final int HOLD_HINT_DELAY_MS = 150;
@@ -69,9 +72,13 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler();
     private final ExecutorService loader = Executors.newFixedThreadPool(3);
     private final ConcurrentHashMap<String, Boolean> pendingThumbnails = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
     private final Semaphore thumbnailSlots = new Semaphore(2);
     private final android.util.LruCache<String, Bitmap> cache = new android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
+    };
+    private final android.util.LruCache<String, Bitmap> originalCache = new android.util.LruCache<String, Bitmap>(ORIGINAL_CACHE_CAPACITY) {
+        @Override protected int sizeOf(String key, Bitmap value) { return 1; }
     };
     private FrameLayout root;
     GridView grid;
@@ -782,7 +789,7 @@ public final class MainActivity extends Activity {
             loader.execute(() -> {
                 Bitmap b = null;
                 boolean acquired = false;
-                try { thumbnailSlots.acquire(); acquired = true; b = decode(photo, 360); if (b != null) cache.put(photo.uri.toString(), b); }
+                 try { thumbnailSlots.acquire(); acquired = true; b = loadThumbnail(photo); if (b != null) cache.put(photo.uri.toString(), b); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
                 finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(photo.uri.toString()); }
                 Bitmap result = b;
@@ -800,9 +807,72 @@ public final class MainActivity extends Activity {
     private Bitmap decode(Photo photo, int target) {
         try (InputStream in = getContentResolver().openInputStream(photo.uri)) {
             BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true; BitmapFactory.decodeStream(in, null, bounds);
-            int sample = 1; while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            int sample = 1; while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2;
             try (InputStream image = getContentResolver().openInputStream(photo.uri)) { BitmapFactory.Options opts = new BitmapFactory.Options(); opts.inSampleSize = sample; return BitmapFactory.decodeStream(image, null, opts); }
         } catch (Exception ignored) { return null; }
+    }
+
+    private String thumbnailKey(Photo photo) { return photo.uri + "|" + photo.modified + "|" + photo.name; }
+
+    private File thumbnailFile(Photo photo) {
+        String key = thumbnailKey(photo);
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder name = new StringBuilder();
+            for (byte value : digest) name.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+            return new File(new File(getCacheDir(), "thumbnails"), name + ".jpg");
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
+    }
+
+    private Bitmap loadThumbnail(Photo photo) {
+        File file = thumbnailFile(photo);
+        if (file.isFile()) {
+            Bitmap cached = BitmapFactory.decodeFile(file.getAbsolutePath());
+            if (cached != null) return cached;
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+        Bitmap decoded;
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeStream(input, null, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = 4;
+            try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                decoded = BitmapFactory.decodeStream(image, null, options);
+            }
+            if (decoded == null) return null;
+            int width = Math.max(1, bounds.outWidth / 4), height = Math.max(1, bounds.outHeight / 4);
+            Bitmap thumbnail = decoded.getWidth() == width && decoded.getHeight() == height
+                    ? decoded : Bitmap.createScaledBitmap(decoded, width, height, true);
+            if (thumbnail != decoded) decoded.recycle();
+            decoded = thumbnail;
+        } catch (Exception ignored) { return null; }
+        Bitmap thumbnail = decoded;
+        File directory = file.getParentFile();
+        if (directory != null && (directory.isDirectory() || directory.mkdirs())) {
+            File temporary = new File(directory, file.getName() + ".tmp");
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
+                if (thumbnail.compress(Bitmap.CompressFormat.JPEG, 88, output)) {
+                    output.flush();
+                    if (!temporary.renameTo(file)) {
+                        try (FileOutputStream fallback = new FileOutputStream(file)) { thumbnail.compress(Bitmap.CompressFormat.JPEG, 88, fallback); }
+                        //noinspection ResultOfMethodCallIgnored
+                        temporary.delete();
+                    }
+                }
+            } catch (Exception ignored) {
+                // Disk caching is opportunistic; continue using the decoded thumbnail.
+                //noinspection ResultOfMethodCallIgnored
+                temporary.delete();
+            }
+        }
+        return thumbnail;
     }
 
     private String imageMetadata(Photo photo) {
@@ -836,30 +906,51 @@ public final class MainActivity extends Activity {
             fadeOutImage(previousImage);
         };
         handler.postDelayed(photoExitRunnable, PHOTO_EXIT_DELAY_MS);
-        loader.execute(() -> {
-            Bitmap bitmap = decode(photo, 2400);
+        Bitmap thumbnail = cache.get(photo.uri.toString());
+        fullImage.setImageBitmap(thumbnail);
+        Runnable loadOriginal = () -> {
+            if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
+            Bitmap cached = originalCache.get(photo.uri.toString());
+            if (cached != null) { showOriginal(photo, transition, cached); return; }
+            if (pendingOriginals.putIfAbsent(photo.uri.toString(), Boolean.TRUE) != null) return;
+            loader.execute(() -> {
+                Bitmap bitmap = decode(photo, 2400);
+                if (bitmap != null) originalCache.put(photo.uri.toString(), bitmap);
+                pendingOriginals.remove(photo.uri.toString());
+                if (bitmap != null) runOnUiThread(() -> showOriginal(photo, transition, bitmap));
+            });
+        };
+        if (thumbnail != null) handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
+        else loader.execute(() -> {
+            Bitmap decodedThumbnail = loadThumbnail(photo);
+            if (decodedThumbnail != null) cache.put(photo.uri.toString(), decodedThumbnail);
             runOnUiThread(() -> {
                 if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-                if (bitmap == null) return;
-                ImageView incoming = new ImageView(MainActivity.this);
-                incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                incoming.setBackgroundColor(theme.viewerBackground);
-                incoming.setImageBitmap(bitmap);
-                incoming.setAlpha(0f);
-                root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
-                incomingImage = incoming;
-                incoming.animate().alpha(1f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
-                    if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
-                        fadeOutImage(incoming);
-                        return;
-                    }
-                    fullImage = incoming;
-                    incomingImage = null;
-                    fullImage.requestFocus();
-                    if (photos.get(selected) != photo) fadeOutImage(incoming);
-                }).start();
+                if (decodedThumbnail != null) fullImage.setImageBitmap(decodedThumbnail);
+                handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
             });
         });
+    }
+
+    private void showOriginal(Photo photo, int transition, Bitmap bitmap) {
+        if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
+        ImageView incoming = new ImageView(MainActivity.this);
+        incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        incoming.setBackgroundColor(theme.viewerBackground);
+        incoming.setImageBitmap(bitmap);
+        incoming.setAlpha(0f);
+        root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
+        incomingImage = incoming;
+        incoming.animate().alpha(1f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+            if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
+                fadeOutImage(incoming);
+                return;
+            }
+            fullImage = incoming;
+            incomingImage = null;
+            fullImage.requestFocus();
+            if (photos.get(selected) != photo) fadeOutImage(incoming);
+        }).start();
     }
 
     private void fadeOutImage(ImageView image) {
