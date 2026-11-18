@@ -626,7 +626,7 @@ public final class MainActivity extends Activity {
         grid = new GridView(this);
         gridColumns = gridColumnsFor(displayMode);
         grid.setNumColumns(gridColumns);
-        grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190));
+        grid.setColumnWidth(dp(gridTileWidthDp(displayMode)));
         grid.setHorizontalSpacing(dp(12));
         grid.setVerticalSpacing(dp(12));
         grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -651,9 +651,28 @@ public final class MainActivity extends Activity {
     }
 
     private int gridColumnsFor(int mode) {
-        int available = getResources().getDisplayMetrics().widthPixels - 2 * dp(22);
-        return Math.max(1, available / dp(mode == 2 ? 300 : 210));
+        int availableWidth = getResources().getDisplayMetrics().widthPixels - 2 * dp(22);
+        int availableHeight = getResources().getDisplayMetrics().heightPixels - dp(230);
+        int minColumns = mode == 2 ? 2 : 3;
+        int minRows = mode == 0 ? 2 : 1;
+        int preferredTileWidth = dp(gridTileWidthDp(mode));
+        int columnsAtPreferredSize = Math.max(1, (availableWidth + dp(12)) / (preferredTileWidth + dp(12)));
+        int rowsAtPreferredSize = Math.max(1, (availableHeight + dp(12)) / dp(gridRowHeightDp(mode) + 12));
+        int columns = Math.max(minColumns, columnsAtPreferredSize);
+        int rows = Math.max(minRows, rowsAtPreferredSize);
+
+        // Preserve the requested minimum row count without making tiles taller than the screen.
+        int tileHeight = Math.max(1, (availableHeight - (rows - 1) * dp(12)) / rows);
+        int imageHeight = Math.max(1, tileHeight - dp(mode == 0 ? 14 : mode == 2 ? 70 : 54));
+        int widthFromHeight = Math.round(imageHeight * (4f / 3f));
+        int tileWidth = Math.min(widthFromHeight, Math.max(1, (availableWidth - (columns - 1) * dp(12)) / columns));
+        grid.setColumnWidth(Math.max(dp(1), tileWidth));
+        return columns;
     }
+
+    private int gridTileWidthDp(int mode) { return mode == 2 ? 280 : 190; }
+
+    private int gridRowHeightDp(int mode) { return mode == 2 ? 276 : mode == 0 ? 160 : 190; }
 
     private void refreshSummary() {
         if (summary == null) return;
@@ -771,7 +790,7 @@ public final class MainActivity extends Activity {
                 cell.addView(previewFrame, new FrameLayout.LayoutParams(-1, -1));
             }
             applyTileStyle(cell, position == selected, position, preview);
-            int rowHeight = displayMode == 2 ? 276 : displayMode == 0 ? 160 : 190;
+            int rowHeight = gridRowHeightDp(displayMode);
             cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1, dp(rowHeight)));
             image.setBackground(theme.solid(theme.surfaceAlt, Theme.PHOTO_RADIUS_DP));
             FrameLayout.LayoutParams imageParams = (FrameLayout.LayoutParams) image.getLayoutParams();
@@ -1171,7 +1190,6 @@ public final class MainActivity extends Activity {
         if (grid == null) return;
         gridColumns = gridColumnsFor(displayMode);
         grid.setNumColumns(gridColumns);
-        grid.setColumnWidth(dp(displayMode == 2 ? 280 : 190));
         ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
         grid.setSelection(selected);
         // notifyDataSetChanged/setNumColumns can rebind or relayout children after this
