@@ -26,6 +26,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.InputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -55,6 +57,7 @@ public final class MainActivity extends Activity {
     private static final int SHARE_FALLBACK_PORTS = 20;
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final long PHOTO_FADE_MS = 110;
+    private static final int ORIGINAL_CACHE_CAPACITY = 9;
     static final int EXIT_HOLD_DURATION_MS = 1000;
     static final int LONG_PRESS_MS = 550;
     static final int HOLD_HINT_DELAY_MS = 150;
@@ -69,9 +72,14 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler();
     private final ExecutorService loader = Executors.newFixedThreadPool(3);
     private final ConcurrentHashMap<String, Boolean> pendingThumbnails = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
     private final Semaphore thumbnailSlots = new Semaphore(2);
     private final android.util.LruCache<String, Bitmap> cache = new android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
+    };
+    private final android.util.LruCache<String, Bitmap> originalCache = new android.util.LruCache<String, Bitmap>(ORIGINAL_CACHE_CAPACITY) {
+        @Override protected int sizeOf(String key, Bitmap value) { return 1; }
     };
     private FrameLayout root;
     GridView grid;
@@ -798,7 +806,7 @@ public final class MainActivity extends Activity {
             loader.execute(() -> {
                 Bitmap b = null;
                 boolean acquired = false;
-                try { thumbnailSlots.acquire(); acquired = true; b = decode(photo, 360); if (b != null) cache.put(thumbnailKey, b); }
+                try { thumbnailSlots.acquire(); acquired = true; b = loadThumbnail(photo); if (b != null) cache.put(thumbnailKey, b); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
                 finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(thumbnailKey); }
                 Bitmap result = b;
@@ -840,16 +848,147 @@ public final class MainActivity extends Activity {
         } catch (Exception ignored) { return null; }
     }
 
+    private String thumbnailKey(Photo photo) { return photo.uri + "|" + photo.modified + "|" + photo.name + "|" + photo.contentDigest; }
+
+    private String digestStream(InputStream input) throws Exception {
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+        byte[] buffer = new byte[64 * 1024];
+        int count;
+        while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+        StringBuilder result = new StringBuilder(64);
+        for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        return result.toString();
+    }
+
+    private String sourceDigest(Photo photo) throws Exception {
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            if (input == null) throw new java.io.IOException("Unable to open source image");
+            return digestStream(input);
+        }
+    }
+
+    private File thumbnailDigestFile(File thumbnail) { return new File(thumbnail.getPath() + ".sha256"); }
+
+    private String readThumbnailDigest(File thumbnail) {
+        File metadata = thumbnailDigestFile(thumbnail);
+        if (!metadata.isFile()) return null;
+        try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(metadata.toPath());
+            String value = new String(bytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
+            return value.matches("[0-9a-f]{64}") ? value : null;
+        } catch (Exception ignored) { return null; }
+    }
+
+    private void writeThumbnailDigest(File thumbnail, String digest) {
+        File metadata = thumbnailDigestFile(thumbnail);
+        File temporary = new File(metadata.getPath() + ".tmp");
+        try (FileOutputStream output = new FileOutputStream(temporary)) {
+            output.write(digest.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            output.flush();
+            if (!temporary.renameTo(metadata)) {
+                try (FileOutputStream fallback = new FileOutputStream(metadata)) {
+                    fallback.write(digest.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                }
+                //noinspection ResultOfMethodCallIgnored
+                temporary.delete();
+            }
+        } catch (Exception ignored) {
+            // A missing digest only causes a later verification/rebuild.
+            //noinspection ResultOfMethodCallIgnored
+            temporary.delete();
+        }
+    }
+
+    private File thumbnailFile(Photo photo) {
+        String key = thumbnailKey(photo);
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder name = new StringBuilder();
+            for (byte value : digest) name.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+            return new File(new File(getCacheDir(), "thumbnails"), name + ".jpg");
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
+    }
+
+    private Bitmap loadThumbnail(Photo photo) {
+        File file = thumbnailFile(photo);
+        if (file.isFile()) {
+            Bitmap cached = BitmapFactory.decodeFile(file.getAbsolutePath());
+            if (cached != null) {
+                        String key = thumbnailKey(photo);
+                if (verifiedThumbnailDigests.putIfAbsent(key, Boolean.TRUE) == null) {
+                    try {
+                        String actualDigest = sourceDigest(photo);
+                        if (actualDigest.equals(readThumbnailDigest(file))) {
+                            return cached;
+                        }
+                        cache.remove(key);
+                        cached.recycle();
+                        //noinspection ResultOfMethodCallIgnored
+                        file.delete();
+                        //noinspection ResultOfMethodCallIgnored
+                        thumbnailDigestFile(file).delete();
+                        verifiedThumbnailDigests.remove(key);
+                    } catch (Exception ignored) {
+                        // Keep serving the existing cached thumbnail if source access fails.
+                        return cached;
+                    }
+                } else return cached;
+            }
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+        Bitmap decoded;
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeStream(input, null, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = 4;
+            try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                decoded = BitmapFactory.decodeStream(image, null, options);
+            }
+            if (decoded == null) return null;
+            int width = Math.max(1, bounds.outWidth / 4), height = Math.max(1, bounds.outHeight / 4);
+            Bitmap thumbnail = decoded.getWidth() == width && decoded.getHeight() == height
+                    ? decoded : Bitmap.createScaledBitmap(decoded, width, height, true);
+            if (thumbnail != decoded) decoded.recycle();
+            decoded = thumbnail;
+        } catch (Exception ignored) { return null; }
+        Bitmap thumbnail = decoded;
+        String sourceDigest = null;
+        try { sourceDigest = sourceDigest(photo); } catch (Exception ignored) { }
+        File directory = file.getParentFile();
+        if (directory != null && (directory.isDirectory() || directory.mkdirs())) {
+            File temporary = new File(directory, file.getName() + ".tmp");
+            try (FileOutputStream output = new FileOutputStream(temporary)) {
+                if (thumbnail.compress(Bitmap.CompressFormat.JPEG, 88, output)) {
+                    output.flush();
+                    if (!temporary.renameTo(file)) {
+                        try (FileOutputStream fallback = new FileOutputStream(file)) { thumbnail.compress(Bitmap.CompressFormat.JPEG, 88, fallback); }
+                        //noinspection ResultOfMethodCallIgnored
+                        temporary.delete();
+                    }
+                    if (sourceDigest != null) writeThumbnailDigest(file, sourceDigest);
+                }
+            } catch (Exception ignored) {
+                // Disk caching is opportunistic; continue using the decoded thumbnail.
+                //noinspection ResultOfMethodCallIgnored
+                temporary.delete();
+            }
+        }
+        if (sourceDigest != null) verifiedThumbnailDigests.put(thumbnailKey(photo), Boolean.TRUE);
+        return thumbnail;
+    }
+
     private String imageMetadata(Photo photo) {
         Bitmap bitmap = cache.get(thumbnailKey(photo));
         String dimensions = bitmap == null ? "Dimensions unavailable" : bitmap.getWidth() + " × " + bitmap.getHeight();
         String format = photo.name.contains(".") ? photo.name.substring(photo.name.lastIndexOf('.') + 1).toUpperCase(java.util.Locale.ROOT) : "IMAGE";
         String date = photo.modified > 0 ? android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", photo.modified).toString() : "Time unavailable";
         return dimensions + "  •  " + date + "  •  " + format;
-    }
-
-    private String thumbnailKey(Photo photo) {
-        return photo.uri + "|" + photo.modified + "|" + photo.name + "|" + photo.contentDigest;
     }
 
     private void refreshPhotoDigest(Photo photo) {
@@ -862,7 +1001,11 @@ public final class MainActivity extends Activity {
             byte[] hash = digest.digest();
             StringBuilder value = new StringBuilder(hash.length * 2);
             for (byte part : hash) value.append(String.format(java.util.Locale.ROOT, "%02x", part & 0xff));
+            String previousDigest = photo.contentDigest;
             photo.contentDigest = value.toString();
+            if (!previousDigest.isEmpty() && !previousDigest.equals(photo.contentDigest)) {
+                cache.remove(photo.uri + "|" + photo.modified + "|" + photo.name + "|" + previousDigest);
+            }
             runOnUiThread(() -> {
                 if (current == Screen.GALLERY && photos.contains(photo) && grid != null) {
                     ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
@@ -889,35 +1032,42 @@ public final class MainActivity extends Activity {
         int transition = ++photoTransition;
         ImageView previousImage = fullImage;
         if (photoExitRunnable != null) handler.removeCallbacks(photoExitRunnable);
-        photoExitRunnable = () -> {
-            if (current != Screen.VIEWER || transition != photoTransition) return;
-            fadeOutImage(previousImage);
+        photoExitRunnable = null;
+        previousImage.animate().cancel();
+        previousImage.setAlpha(1f);
+        Bitmap thumbnail = cache.get(thumbnailKey(photo));
+        fullImage.setImageBitmap(thumbnail);
+        Runnable loadOriginal = () -> {
+            if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
+            Bitmap cached = originalCache.get(photo.uri.toString());
+            if (cached != null) { showOriginal(photo, transition, cached); return; }
+            if (pendingOriginals.putIfAbsent(photo.uri.toString(), Boolean.TRUE) != null) return;
+            loader.execute(() -> {
+                Bitmap bitmap = decode(photo, 2400);
+                if (bitmap != null) originalCache.put(photo.uri.toString(), bitmap);
+                pendingOriginals.remove(photo.uri.toString());
+                if (bitmap != null) runOnUiThread(() -> showOriginal(photo, transition, bitmap));
+            });
         };
-        handler.postDelayed(photoExitRunnable, PHOTO_EXIT_DELAY_MS);
-        loader.execute(() -> {
-            Bitmap bitmap = decode(photo, 2400);
+        if (thumbnail != null) handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
+        else loader.execute(() -> {
+            Bitmap decodedThumbnail = loadThumbnail(photo);
+            if (decodedThumbnail != null) cache.put(thumbnailKey(photo), decodedThumbnail);
             runOnUiThread(() -> {
                 if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-                if (bitmap == null) return;
-                ImageView incoming = new ImageView(MainActivity.this);
-                incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                incoming.setBackgroundColor(theme.viewerBackground);
-                incoming.setImageBitmap(bitmap);
-                incoming.setAlpha(0f);
-                root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
-                incomingImage = incoming;
-                incoming.animate().alpha(1f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
-                    if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
-                        fadeOutImage(incoming);
-                        return;
-                    }
-                    fullImage = incoming;
-                    incomingImage = null;
-                    fullImage.requestFocus();
-                    if (photos.get(selected) != photo) fadeOutImage(incoming);
-                }).start();
+                if (decodedThumbnail != null) fullImage.setImageBitmap(decodedThumbnail);
+                handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
             });
         });
+    }
+
+    private void showOriginal(Photo photo, int transition, Bitmap bitmap) {
+        if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
+        // Replace the bitmap on the same view. Layering two independently fading
+        // ImageViews brightens their overlap and produces a visible white flash.
+        fullImage.animate().cancel();
+        fullImage.setAlpha(1f);
+        fullImage.setImageBitmap(bitmap);
     }
 
     private void fadeOutImage(ImageView image) {
