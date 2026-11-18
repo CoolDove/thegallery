@@ -932,37 +932,11 @@ public final class MainActivity extends Activity {
 
     private void showOriginal(Photo photo, int transition, Bitmap bitmap) {
         if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-        ImageView incoming = new ImageView(MainActivity.this);
-        incoming.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        incoming.setBackgroundColor(theme.viewerBackground);
-        incoming.setImageBitmap(bitmap);
-        // Cross-fade from the existing thumbnail; keeping the incoming bitmap opaque
-        // avoids exposing the window/root background between frames.
-        incoming.setAlpha(1f);
-        root.addView(incoming, new FrameLayout.LayoutParams(-1, -1));
-        incomingImage = incoming;
-        incoming.setVisibility(View.INVISIBLE);
-        incoming.post(() -> {
-            if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
-                fadeOutImage(incoming);
-                return;
-            }
-            incoming.setVisibility(View.VISIBLE);
-            ImageView outgoing = fullImage;
-            incoming.setAlpha(0f);
-            incoming.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
-            outgoing.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
-                if (current != Screen.VIEWER || transition != photoTransition || incomingImage != incoming) {
-                    fadeOutImage(incoming);
-                    outgoing.setAlpha(1f);
-                    return;
-                }
-                fullImage = incoming;
-                incomingImage = null;
-                if (outgoing != incoming) root.removeView(outgoing);
-                fullImage.requestFocus();
-            }).start();
-        });
+        // Replace the bitmap on the same view. Layering two independently fading
+        // ImageViews brightens their overlap and produces a visible white flash.
+        fullImage.animate().cancel();
+        fullImage.setAlpha(1f);
+        fullImage.setImageBitmap(bitmap);
     }
 
     private void fadeOutImage(ImageView image) {
