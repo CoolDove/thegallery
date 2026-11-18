@@ -116,6 +116,7 @@ public final class MainActivity extends Activity {
 
     static final class Photo {
         final Uri uri; final String name; final long modified;
+        volatile String contentDigest = "";
         Photo(Uri uri, String name, long modified) { this.uri = uri; this.name = name; this.modified = modified; }
     }
 
@@ -300,8 +301,20 @@ public final class MainActivity extends Activity {
             }
             runOnUiThread(() -> {
                 if (generation != refreshGeneration) return;
+                HashMap<String, Photo> previousPhotos = new HashMap<>();
+                for (Photo photo : photos) previousPhotos.put(photo.uri.toString(), photo);
+                for (Photo photo : found) {
+                    Photo previous = previousPhotos.get(photo.uri.toString());
+                    if (previous != null && previous.modified == photo.modified && previous.name.equals(photo.name)) {
+                        photo.contentDigest = previous.contentDigest;
+                    }
+                }
                 photos.clear(); photos.addAll(found);
-                cache.evictAll();
+                if (current == Screen.GALLERY) {
+                    for (Photo photo : photos) {
+                        if (photo.contentDigest.isEmpty()) loader.execute(() -> refreshPhotoDigest(photo));
+                    }
+                }
                 HashSet<String> availableUris = new HashSet<>();
                 for (Photo photo : photos) availableUris.add(photo.uri.toString());
                 selectedPhotoUris.retainAll(availableUris);
@@ -777,23 +790,24 @@ public final class MainActivity extends Activity {
             nameParams.height = dp(displayMode == 2 ? 36 : 40);
             nameParams.bottomMargin = displayMode == 2 ? dp(26) : 0;
             name.setLayoutParams(nameParams);
-        cell.setTag(photo.uri.toString());
-        Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
-        if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
+        String thumbnailKey = thumbnailKey(photo);
+        cell.setTag(thumbnailKey);
+        Bitmap bitmap = cache.get(thumbnailKey); image.setImageBitmap(bitmap);
+        if (bitmap == null && pendingThumbnails.putIfAbsent(thumbnailKey, Boolean.TRUE) == null) {
             image.setImageDrawable(null);
             loader.execute(() -> {
                 Bitmap b = null;
                 boolean acquired = false;
-                try { thumbnailSlots.acquire(); acquired = true; b = decode(photo, 360); if (b != null) cache.put(photo.uri.toString(), b); }
+                try { thumbnailSlots.acquire(); acquired = true; b = decode(photo, 360); if (b != null) cache.put(thumbnailKey, b); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(photo.uri.toString()); }
+                finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(thumbnailKey); }
                 Bitmap result = b;
                 runOnUiThread(() -> {
                     if (grid == null) return;
                     if (result == null) {
                         int visibleFirst = grid.getFirstVisiblePosition();
                         View visibleChild = grid.getChildAt(position - visibleFirst);
-                        if (visibleChild instanceof FrameLayout && photo.uri.toString().equals(visibleChild.getTag())) {
+                        if (visibleChild instanceof FrameLayout && thumbnailKey.equals(visibleChild.getTag())) {
                             ImageView failedImage = (ImageView) ((FrameLayout) visibleChild).getChildAt(0);
                             failedImage.setImageResource(android.R.drawable.ic_menu_report_image);
                             failedImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
@@ -801,7 +815,7 @@ public final class MainActivity extends Activity {
                         return;
                     }
                     int first = grid.getFirstVisiblePosition(); View child = grid.getChildAt(position - first);
-                    if (child instanceof FrameLayout && photo.uri.toString().equals(child.getTag())) { FrameLayout targetCell = (FrameLayout) child; ((ImageView)targetCell.getChildAt(0)).setImageBitmap(result); if (displayMode == 2) ((TextView)targetCell.getChildAt(2)).setText(imageMetadata(photo)); }
+                    if (child instanceof FrameLayout && thumbnailKey.equals(child.getTag())) { FrameLayout targetCell = (FrameLayout) child; ((ImageView)targetCell.getChildAt(0)).setImageBitmap(result); if (displayMode == 2) ((TextView)targetCell.getChildAt(2)).setText(imageMetadata(photo)); }
                 });
             });
         }
@@ -827,11 +841,34 @@ public final class MainActivity extends Activity {
     }
 
     private String imageMetadata(Photo photo) {
-        Bitmap bitmap = cache.get(photo.uri.toString());
+        Bitmap bitmap = cache.get(thumbnailKey(photo));
         String dimensions = bitmap == null ? "Dimensions unavailable" : bitmap.getWidth() + " × " + bitmap.getHeight();
         String format = photo.name.contains(".") ? photo.name.substring(photo.name.lastIndexOf('.') + 1).toUpperCase(java.util.Locale.ROOT) : "IMAGE";
         String date = photo.modified > 0 ? android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", photo.modified).toString() : "Time unavailable";
         return dimensions + "  •  " + date + "  •  " + format;
+    }
+
+    private String thumbnailKey(Photo photo) {
+        return photo.uri + "|" + photo.modified + "|" + photo.name + "|" + photo.contentDigest;
+    }
+
+    private void refreshPhotoDigest(Photo photo) {
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            if (input == null) return;
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+            byte[] hash = digest.digest();
+            StringBuilder value = new StringBuilder(hash.length * 2);
+            for (byte part : hash) value.append(String.format(java.util.Locale.ROOT, "%02x", part & 0xff));
+            photo.contentDigest = value.toString();
+            runOnUiThread(() -> {
+                if (current == Screen.GALLERY && photos.contains(photo) && grid != null) {
+                    ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+                }
+            });
+        } catch (Exception ignored) { }
     }
 
     void openPhoto() {
