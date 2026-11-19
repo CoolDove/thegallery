@@ -124,6 +124,7 @@ public final class MainActivity extends Activity {
 
     static final class Photo {
         final Uri uri; final String name; final long modified;
+        volatile String contentDigest = "";
         Photo(Uri uri, String name, long modified) { this.uri = uri; this.name = name; this.modified = modified; }
     }
 
@@ -308,7 +309,20 @@ public final class MainActivity extends Activity {
             }
             runOnUiThread(() -> {
                 if (generation != refreshGeneration) return;
+                HashMap<String, Photo> previousPhotos = new HashMap<>();
+                for (Photo photo : photos) previousPhotos.put(photo.uri.toString(), photo);
+                for (Photo photo : found) {
+                    Photo previous = previousPhotos.get(photo.uri.toString());
+                    if (previous != null && previous.modified == photo.modified && previous.name.equals(photo.name)) {
+                        photo.contentDigest = previous.contentDigest;
+                    }
+                }
                 photos.clear(); photos.addAll(found);
+                if (current == Screen.GALLERY) {
+                    for (Photo photo : photos) {
+                        if (photo.contentDigest.isEmpty()) loader.execute(() -> refreshPhotoDigest(photo));
+                    }
+                }
                 HashSet<String> availableUris = new HashSet<>();
                 for (Photo photo : photos) availableUris.add(photo.uri.toString());
                 selectedPhotoUris.retainAll(availableUris);
@@ -320,6 +334,7 @@ public final class MainActivity extends Activity {
                     for (int i = 0; i < photos.size(); i++) if (selectedPhotoUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
                 }
                 scanInProgress = false;
+                boolean refreshAgain = sourcesDirty;
                 sourcesDirty = false;
                 if (current == Screen.GALLERY) {
                     if (grid == null || !grid.isAttachedToWindow()) {
@@ -332,7 +347,7 @@ public final class MainActivity extends Activity {
                     }
                 }
                 updateRefreshIndicator(false);
-                if (sourcesDirty && current == Screen.GALLERY) { sourcesDirty = false; scan(); }
+                if (refreshAgain && current == Screen.GALLERY) scan();
             });
         });
     }
@@ -802,21 +817,32 @@ public final class MainActivity extends Activity {
             nameParams.height = dp(displayMode == 2 ? 36 : 40);
             nameParams.bottomMargin = displayMode == 2 ? dp(26) : 0;
             name.setLayoutParams(nameParams);
-        cell.setTag(photo.uri.toString());
-        Bitmap bitmap = cache.get(photo.uri.toString()); image.setImageBitmap(bitmap);
-        if (bitmap == null && pendingThumbnails.putIfAbsent(photo.uri.toString(), Boolean.TRUE) == null) {
+        String thumbnailKey = thumbnailKey(photo);
+        cell.setTag(thumbnailKey);
+        Bitmap bitmap = cache.get(thumbnailKey); image.setImageBitmap(bitmap);
+        if (bitmap == null && pendingThumbnails.putIfAbsent(thumbnailKey, Boolean.TRUE) == null) {
             image.setImageDrawable(null);
             loader.execute(() -> {
                 Bitmap b = null;
                 boolean acquired = false;
-                 try { thumbnailSlots.acquire(); acquired = true; b = loadThumbnail(photo); if (b != null) cache.put(photo.uri.toString(), b); }
+                try { thumbnailSlots.acquire(); acquired = true; b = loadThumbnail(photo); if (b != null) cache.put(thumbnailKey, b); }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-                finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(photo.uri.toString()); }
+                finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(thumbnailKey); }
                 Bitmap result = b;
                 runOnUiThread(() -> {
-                    if (result == null || grid == null) return;
+                    if (grid == null) return;
+                    if (result == null) {
+                        int visibleFirst = grid.getFirstVisiblePosition();
+                        View visibleChild = grid.getChildAt(position - visibleFirst);
+                        if (visibleChild instanceof FrameLayout && thumbnailKey.equals(visibleChild.getTag())) {
+                            ImageView failedImage = (ImageView) ((FrameLayout) visibleChild).getChildAt(0);
+                            failedImage.setImageResource(android.R.drawable.ic_menu_report_image);
+                            failedImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+                        }
+                        return;
+                    }
                     int first = grid.getFirstVisiblePosition(); View child = grid.getChildAt(position - first);
-                    if (child instanceof FrameLayout && photo.uri.toString().equals(child.getTag())) { FrameLayout targetCell = (FrameLayout) child; ((ImageView)targetCell.getChildAt(0)).setImageBitmap(result); if (displayMode == 2) ((TextView)targetCell.getChildAt(2)).setText(imageMetadata(photo)); }
+                    if (child instanceof FrameLayout && thumbnailKey.equals(child.getTag())) { FrameLayout targetCell = (FrameLayout) child; ((ImageView)targetCell.getChildAt(0)).setImageBitmap(result); if (displayMode == 2) ((TextView)targetCell.getChildAt(2)).setText(imageMetadata(photo)); }
                 });
             });
         }
@@ -825,15 +851,23 @@ public final class MainActivity extends Activity {
     }
 
     private Bitmap decode(Photo photo, int target) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
         try (InputStream in = getContentResolver().openInputStream(photo.uri)) {
-            BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true; BitmapFactory.decodeStream(in, null, bounds);
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
-            int sample = 1; while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2;
-            try (InputStream image = getContentResolver().openInputStream(photo.uri)) { BitmapFactory.Options opts = new BitmapFactory.Options(); opts.inSampleSize = sample; return BitmapFactory.decodeStream(image, null, opts); }
+            if (in == null) return null;
+            BitmapFactory.decodeStream(in, null, bounds);
+        } catch (Exception ignored) { return null; }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        int sample = 1;
+        while (bounds.outWidth / sample > target * 2 || bounds.outHeight / sample > target * 2) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+            return image == null ? null : BitmapFactory.decodeStream(image, null, options);
         } catch (Exception ignored) { return null; }
     }
 
-    private String thumbnailKey(Photo photo) { return photo.uri + "|" + photo.modified + "|" + photo.name; }
+    private String thumbnailKey(Photo photo) { return photo.uri + "|" + photo.modified + "|" + photo.name + "|" + photo.contentDigest; }
 
     private String digestStream(InputStream input) throws Exception {
         java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
@@ -901,7 +935,7 @@ public final class MainActivity extends Activity {
         if (file.isFile()) {
             Bitmap cached = BitmapFactory.decodeFile(file.getAbsolutePath());
             if (cached != null) {
-                String key = photo.uri.toString();
+                        String key = thumbnailKey(photo);
                 if (verifiedThumbnailDigests.putIfAbsent(key, Boolean.TRUE) == null) {
                     try {
                         String actualDigest = sourceDigest(photo);
@@ -935,7 +969,7 @@ public final class MainActivity extends Activity {
             try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
                 decoded = BitmapFactory.decodeStream(image, null, options);
             }
-        if (decoded == null) return null;
+            if (decoded == null) return null;
             int width = Math.max(1, bounds.outWidth / 4), height = Math.max(1, bounds.outHeight / 4);
             Bitmap thumbnail = decoded.getWidth() == width && decoded.getHeight() == height
                     ? decoded : Bitmap.createScaledBitmap(decoded, width, height, true);
@@ -964,16 +998,39 @@ public final class MainActivity extends Activity {
                 temporary.delete();
             }
         }
-        if (sourceDigest != null) verifiedThumbnailDigests.put(photo.uri.toString(), Boolean.TRUE);
+        if (sourceDigest != null) verifiedThumbnailDigests.put(thumbnailKey(photo), Boolean.TRUE);
         return thumbnail;
     }
 
     private String imageMetadata(Photo photo) {
-        Bitmap bitmap = cache.get(photo.uri.toString());
+        Bitmap bitmap = cache.get(thumbnailKey(photo));
         String dimensions = bitmap == null ? "Dimensions unavailable" : bitmap.getWidth() + " × " + bitmap.getHeight();
         String format = photo.name.contains(".") ? photo.name.substring(photo.name.lastIndexOf('.') + 1).toUpperCase(java.util.Locale.ROOT) : "IMAGE";
         String date = photo.modified > 0 ? android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", photo.modified).toString() : "Time unavailable";
         return dimensions + "  •  " + date + "  •  " + format;
+    }
+
+    private void refreshPhotoDigest(Photo photo) {
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            if (input == null) return;
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+            byte[] hash = digest.digest();
+            StringBuilder value = new StringBuilder(hash.length * 2);
+            for (byte part : hash) value.append(String.format(java.util.Locale.ROOT, "%02x", part & 0xff));
+            String previousDigest = photo.contentDigest;
+            photo.contentDigest = value.toString();
+            if (!previousDigest.isEmpty() && !previousDigest.equals(photo.contentDigest)) {
+                cache.remove(photo.uri + "|" + photo.modified + "|" + photo.name + "|" + previousDigest);
+            }
+            runOnUiThread(() -> {
+                if (current == Screen.GALLERY && photos.contains(photo) && grid != null) {
+                    ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
+                }
+            });
+        } catch (Exception ignored) { }
     }
 
     void openPhoto() {
@@ -997,7 +1054,7 @@ public final class MainActivity extends Activity {
         photoExitRunnable = null;
         previousImage.animate().cancel();
         previousImage.setAlpha(1f);
-        Bitmap thumbnail = cache.get(photo.uri.toString());
+        Bitmap thumbnail = cache.get(thumbnailKey(photo));
         fullImage.setImageBitmap(thumbnail);
         Runnable loadOriginal = () -> {
             if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
@@ -1014,7 +1071,7 @@ public final class MainActivity extends Activity {
         if (thumbnail != null) handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
         else loader.execute(() -> {
             Bitmap decodedThumbnail = loadThumbnail(photo);
-            if (decodedThumbnail != null) cache.put(photo.uri.toString(), decodedThumbnail);
+            if (decodedThumbnail != null) cache.put(thumbnailKey(photo), decodedThumbnail);
             runOnUiThread(() -> {
                 if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
                 if (decodedThumbnail != null) fullImage.setImageBitmap(decodedThumbnail);
