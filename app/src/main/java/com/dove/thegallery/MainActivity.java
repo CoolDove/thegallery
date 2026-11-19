@@ -1054,6 +1054,11 @@ public final class MainActivity extends Activity {
         photoExitRunnable = null;
         previousImage.animate().cancel();
         previousImage.setAlpha(1f);
+        Bitmap cachedOriginal = originalCache.get(photo.uri.toString());
+        if (cachedOriginal != null) {
+            fullImage.setImageBitmap(cachedOriginal);
+            return;
+        }
         Bitmap thumbnail = cache.get(thumbnailKey(photo));
         fullImage.setImageBitmap(thumbnail);
         Runnable loadOriginal = () -> {
