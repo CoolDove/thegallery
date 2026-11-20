@@ -1017,7 +1017,7 @@ public final class MainActivity extends Activity {
         enterScreen(Screen.VIEWER);
         root.removeAllViews();
         root.setBackgroundColor(theme.viewerBackground);
-        fullImage = new ImageView(this); fullImage.setBackgroundColor(theme.viewerBackground); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
+        fullImage = new ImageView(this); fullImage.setBackground(viewerPlaceholder()); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
@@ -1033,8 +1033,17 @@ public final class MainActivity extends Activity {
         photoExitRunnable = null;
         previousImage.animate().cancel();
         previousImage.setAlpha(1f);
+        Bitmap cachedOriginal = originalCache.get(photo.uri.toString());
+        if (cachedOriginal != null) {
+            transitionViewerBitmap(cachedOriginal);
+            return;
+        }
         Bitmap thumbnail = cache.get(thumbnailKey(photo));
-        fullImage.setImageBitmap(thumbnail);
+        if (thumbnail != null) transitionViewerBitmap(thumbnail);
+        else {
+            fullImage.setImageDrawable(null);
+            fullImage.setBackground(viewerPlaceholder());
+        }
         Runnable loadOriginal = () -> {
             if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
             Bitmap cached = originalCache.get(photo.uri.toString());
@@ -1053,7 +1062,7 @@ public final class MainActivity extends Activity {
             if (decodedThumbnail != null) cache.put(thumbnailKey(photo), decodedThumbnail);
             runOnUiThread(() -> {
                 if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-                if (decodedThumbnail != null) fullImage.setImageBitmap(decodedThumbnail);
+                if (decodedThumbnail != null) transitionViewerBitmap(decodedThumbnail);
                 handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
             });
         });
@@ -1061,11 +1070,33 @@ public final class MainActivity extends Activity {
 
     private void showOriginal(Photo photo, int transition, Bitmap bitmap) {
         if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-        // Replace the bitmap on the same view. Layering two independently fading
-        // ImageViews brightens their overlap and produces a visible white flash.
-        fullImage.animate().cancel();
-        fullImage.setAlpha(1f);
-        fullImage.setImageBitmap(bitmap);
+        transitionViewerBitmap(bitmap);
+    }
+
+    private void transitionViewerBitmap(Bitmap bitmap) {
+        if (fullImage == null || root == null) return;
+        ImageView previous = fullImage;
+        ImageView next = new ImageView(this);
+        next.setBackground(viewerPlaceholder());
+        next.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        next.setFocusable(true);
+        next.setFocusableInTouchMode(true);
+        next.setImageBitmap(bitmap);
+        next.setAlpha(0f);
+        root.addView(next, new FrameLayout.LayoutParams(-1, -1));
+        fullImage = next;
+        previous.animate().cancel();
+        next.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
+        previous.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+            if (previous.getParent() == root) root.removeView(previous);
+        }).start();
+        next.requestFocus();
+    }
+
+    private android.graphics.drawable.Drawable viewerPlaceholder() {
+        return new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                new int[] {0xff55585d, 0xff34373b, 0xff45484d});
     }
 
     private void fadeOutImage(ImageView image) {
