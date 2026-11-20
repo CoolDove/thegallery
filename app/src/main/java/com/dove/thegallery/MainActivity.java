@@ -71,7 +71,14 @@ public final class MainActivity extends Activity {
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
     private final ExecutorService loader = Executors.newFixedThreadPool(3);
+    private final ExecutorService digestLoader = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "thumbnail-digest");
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
     private final ConcurrentHashMap<String, Boolean> pendingThumbnails = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> pendingDigests = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
     private final Semaphore thumbnailSlots = new Semaphore(2);
     private final android.util.LruCache<String, Bitmap> cache = new android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
@@ -879,7 +886,10 @@ public final class MainActivity extends Activity {
         File file = thumbnailFile(photo);
         if (file.isFile()) {
             Bitmap cached = BitmapFactory.decodeFile(file.getAbsolutePath());
-            if (cached != null) return cached;
+            if (cached != null) {
+                verifyThumbnailDigest(photo, file);
+                return cached;
+            }
             //noinspection ResultOfMethodCallIgnored
             file.delete();
         }
@@ -920,7 +930,78 @@ public final class MainActivity extends Activity {
                 temporary.delete();
             }
         }
+        createThumbnailDigest(photo, file);
         return thumbnail;
+    }
+
+    private void createThumbnailDigest(Photo photo, File thumbnail) {
+        String key = thumbnailKey(photo);
+        if (pendingDigests.putIfAbsent(key, Boolean.TRUE) != null) return;
+        digestLoader.execute(() -> {
+            try {
+                if (thumbnail.isFile()) {
+                    writeThumbnailDigest(thumbnail, sourceDigest(photo));
+                    verifiedThumbnailDigests.put(key, Boolean.TRUE);
+                }
+            } catch (Exception ignored) {
+                // A later visible cache hit will retry verification.
+            } finally {
+                pendingDigests.remove(key);
+            }
+        });
+    }
+
+    private void verifyThumbnailDigest(Photo photo, File thumbnail) {
+        String key = thumbnailKey(photo);
+        if (verifiedThumbnailDigests.containsKey(key) || pendingDigests.putIfAbsent(key, Boolean.TRUE) != null) return;
+        digestLoader.execute(() -> {
+            try {
+                String actual = sourceDigest(photo);
+                if (!actual.equals(readThumbnailDigest(thumbnail))) {
+                    verifiedThumbnailDigests.remove(key);
+                    File thumbnailDigest = thumbnailDigestFile(thumbnail);
+                    //noinspection ResultOfMethodCallIgnored
+                    thumbnail.delete();
+                    //noinspection ResultOfMethodCallIgnored
+                    thumbnailDigest.delete();
+                    cache.remove(key);
+                } else verifiedThumbnailDigests.put(key, Boolean.TRUE);
+            } catch (Exception ignored) {
+                // Keep the cached thumbnail; source access may be temporarily unavailable.
+            } finally {
+                pendingDigests.remove(key);
+            }
+        });
+    }
+
+    private String sourceDigest(Photo photo) throws Exception {
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            if (input == null) throw new java.io.IOException("Unable to open source image");
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+            StringBuilder result = new StringBuilder(64);
+            for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+            return result.toString();
+        }
+    }
+
+    private File thumbnailDigestFile(File thumbnail) { return new File(thumbnail.getPath() + ".sha256"); }
+
+    private String readThumbnailDigest(File thumbnail) {
+        File metadata = thumbnailDigestFile(thumbnail);
+        if (!metadata.isFile()) return null;
+        try {
+            String value = new String(java.nio.file.Files.readAllBytes(metadata.toPath()), java.nio.charset.StandardCharsets.US_ASCII).trim();
+            return value.matches("[0-9a-f]{64}") ? value : null;
+        } catch (Exception ignored) { return null; }
+    }
+
+    private void writeThumbnailDigest(File thumbnail, String digest) {
+        try (FileOutputStream output = new FileOutputStream(thumbnailDigestFile(thumbnail))) {
+            output.write(digest.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        } catch (Exception ignored) { }
     }
 
     private String imageMetadata(Photo photo) {
