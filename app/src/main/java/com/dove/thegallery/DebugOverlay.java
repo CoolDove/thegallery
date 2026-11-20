@@ -1,12 +1,14 @@
 package com.dove.thegallery;
 
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.text.TextPaint;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.TextView;
 
 /**
  * Hidden diagnostics panel: app memory, cache tiers, and worker thread state.
@@ -15,14 +17,17 @@ import android.widget.TextView;
  */
 final class DebugOverlay {
     private static final long REFRESH_MS = 500;
-    private static final int PANEL_COLOR = 0xF214161B;
+    private static final int TEXT_COLOR = 0xFF3DFF7A;
+    private static final int OUTLINE_COLOR = 0xD9000000;
+    private static final int SHADOW_COLOR = 0xB3000000;
+    private static final float TEXT_SIZE_SP = 11f;
 
     private final MainActivity activity;
     private final FrameLayout root;
     private final Handler handler = new Handler();
 
     private View panel;
-    private TextView text;
+    private MonitorText text;
     private boolean visible;
     private long scheduledAt;
     private long uiLagMs;
@@ -34,7 +39,7 @@ final class DebugOverlay {
             uiLagMs = scheduledAt == 0 ? 0 : Math.max(0, now - scheduledAt);
             scheduledAt = now + REFRESH_MS;
             attach();
-            if (text != null) text.setText(activity.debugReport() + "\nUI    lag " + uiLagMs + " ms");
+            if (text != null) text.setLines(activity.debugReport() + "\nUI    lag " + uiLagMs + " ms");
             handler.postDelayed(this, REFRESH_MS);
         }
     };
@@ -70,15 +75,10 @@ final class DebugOverlay {
 
     private View build() {
         FrameLayout box = new FrameLayout(activity);
-        box.setBackground(activity.theme.bordered(PANEL_COLOR, 12f, 1f, activity.theme.outline));
-        box.setElevation(activity.dp(14));
+        box.setClipChildren(false);
         box.setFocusable(false);
-        TextView view = new TextView(activity);
-        view.setTypeface(Typeface.MONOSPACE);
-        view.setTextSize(10f);
-        view.setTextColor(0xffe8edf7);
-        view.setLineSpacing(0f, 0.95f);
-        int padding = activity.dp(10);
+        MonitorText view = new MonitorText();
+        int padding = activity.dp(8);
         view.setPadding(padding, padding, padding, padding);
         box.addView(view, new FrameLayout.LayoutParams(-2, -2));
         text = view;
@@ -92,5 +92,65 @@ final class DebugOverlay {
                 Gravity.TOP | Gravity.LEFT);
         params.setMargins(margin, margin, margin, margin);
         return params;
+    }
+
+    /**
+     * Fixed-grid readout drawn by hand: no plate behind the text, just green glyphs with a dark
+     * outline and drop shadow so they stay readable over bright photos and the light theme.
+     */
+    private final class MonitorText extends View {
+        private final TextPaint fill = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final TextPaint outline = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final float lineHeight;
+        private final float baselineOffset;
+        private String[] lines = new String[0];
+        private int contentWidth;
+
+        MonitorText() {
+            super(activity);
+            Typeface typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
+            float size = TEXT_SIZE_SP * getResources().getDisplayMetrics().scaledDensity;
+            fill.setTypeface(typeface);
+            fill.setTextSize(size);
+            fill.setColor(TEXT_COLOR);
+            fill.setShadowLayer(activity.dp(2), 0f, activity.dp(1), SHADOW_COLOR);
+            outline.setTypeface(typeface);
+            outline.setTextSize(size);
+            outline.setStyle(Paint.Style.STROKE);
+            outline.setStrokeJoin(Paint.Join.ROUND);
+            outline.setStrokeWidth(2f);
+            outline.setColor(OUTLINE_COLOR);
+            Paint.FontMetrics metrics = fill.getFontMetrics();
+            lineHeight = metrics.descent - metrics.ascent;
+            baselineOffset = -metrics.ascent;
+        }
+
+        void setLines(String value) {
+            lines = value.split("\n", -1);
+            int width = 0;
+            for (String line : lines) width = Math.max(width, (int) Math.ceil(fill.measureText(line)));
+            if (width != contentWidth) {
+                contentWidth = width;
+                requestLayout();
+            }
+            invalidate();
+        }
+
+        @Override protected void onMeasure(int widthSpec, int heightSpec) {
+            int width = contentWidth + getPaddingLeft() + getPaddingRight();
+            int height = Math.round(lineHeight * lines.length) + getPaddingTop() + getPaddingBottom();
+            setMeasuredDimension(
+                    resolveSize(width, widthSpec), resolveSize(height, heightSpec));
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float x = getPaddingLeft();
+            float y = getPaddingTop() + baselineOffset;
+            for (String line : lines) {
+                canvas.drawText(line, x, y, outline);
+                canvas.drawText(line, x, y, fill);
+                y += lineHeight;
+            }
+        }
     }
 }
