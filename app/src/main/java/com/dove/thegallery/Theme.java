@@ -28,6 +28,9 @@ final class Theme {
     final boolean night;
     final int background;
     final int backdropTile;
+    final int backdropStart;
+    final int backdropEnd;
+    final int backdropDot;
     final int surface;
     final int surfaceAlt;
     final int surfaceGlass;
@@ -48,6 +51,9 @@ final class Theme {
         night = isNight(context);
         background = context.getColor(R.color.gallery_background);
         backdropTile = context.getColor(R.color.gallery_backdrop_tile);
+        backdropStart = context.getColor(R.color.gallery_backdrop_start);
+        backdropEnd = context.getColor(R.color.gallery_backdrop_end);
+        backdropDot = context.getColor(R.color.gallery_backdrop_dot);
         surface = context.getColor(R.color.gallery_surface);
         surfaceAlt = context.getColor(R.color.gallery_surface_alt);
         surfaceGlass = context.getColor(R.color.gallery_surface_glass);
@@ -74,7 +80,7 @@ final class Theme {
 
     int dp(float value) { return Math.round(value * density); }
 
-    /** Full-screen background: a warm-to-pink gradient with a subtle halftone texture. */
+    /** Full-screen background: a white-to-light-gray gradient with a subtle halftone texture. */
     Drawable backdrop() { return new BackdropDrawable(); }
 
     GradientDrawable solid(int color, float radiusDp) {
@@ -134,12 +140,12 @@ final class Theme {
             gradientPath.lineTo(0, bounds.height());
             gradientPath.close();
             gradientPaint.setShader(new LinearGradient(0, 0, bounds.width(), bounds.height(),
-                    accentWarm, accent, Shader.TileMode.CLAMP));
+                    backdropStart, backdropEnd, Shader.TileMode.CLAMP));
             canvas.drawPath(gradientPath, gradientPaint);
 
             // Small, translucent gray dots keep the gradient lively without imposing tile shapes.
             dotPaint.setShader(null);
-            dotPaint.setColor(night ? 0x3D000000 : 0x3DFFFFFF);
+            dotPaint.setColor(backdropDot);
             float spacing = dp(13);
             float radius = Math.max(1f, dp(1.1f));
             for (float y = spacing * 0.5f; y < bounds.height(); y += spacing) {

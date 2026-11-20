@@ -3,6 +3,9 @@
     <!-- Dark palette: deep graphite background, elevated cards, brighter coral accent. -->
     <color name="gallery_background">#121419</color>
     <color name="gallery_backdrop_tile">#191C23</color>
+    <color name="gallery_backdrop_start">#171A20</color>
+    <color name="gallery_backdrop_end">#0E1014</color>
+    <color name="gallery_backdrop_dot">#14FFFFFF</color>
     <color name="gallery_surface">#1D2027</color>
     <color name="gallery_surface_alt">#262A33</color>
     <color name="gallery_surface_glass">#E61D2027</color>
