@@ -94,6 +94,7 @@ final class ViewerController implements ScreenController {
 
         if (down && !activity.photos.isEmpty()
                 && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            activity.viewerStep = key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1;
             activity.selected = Math.floorMod(activity.selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), activity.photos.size());
             activity.displayPhoto();
             return true;
