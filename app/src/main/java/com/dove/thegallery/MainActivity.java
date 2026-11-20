@@ -1056,11 +1056,11 @@ public final class MainActivity extends Activity {
         previousImage.setAlpha(1f);
         Bitmap cachedOriginal = originalCache.get(photo.uri.toString());
         if (cachedOriginal != null) {
-            fullImage.setImageBitmap(cachedOriginal);
+            transitionViewerBitmap(cachedOriginal);
             return;
         }
         Bitmap thumbnail = cache.get(thumbnailKey(photo));
-        fullImage.setImageBitmap(thumbnail);
+        if (thumbnail != null) transitionViewerBitmap(thumbnail);
         Runnable loadOriginal = () -> {
             if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
             Bitmap cached = originalCache.get(photo.uri.toString());
@@ -1079,7 +1079,7 @@ public final class MainActivity extends Activity {
             if (decodedThumbnail != null) cache.put(thumbnailKey(photo), decodedThumbnail);
             runOnUiThread(() -> {
                 if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-                if (decodedThumbnail != null) fullImage.setImageBitmap(decodedThumbnail);
+                if (decodedThumbnail != null) transitionViewerBitmap(decodedThumbnail);
                 handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
             });
         });
@@ -1087,11 +1087,27 @@ public final class MainActivity extends Activity {
 
     private void showOriginal(Photo photo, int transition, Bitmap bitmap) {
         if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
-        // Replace the bitmap on the same view. Layering two independently fading
-        // ImageViews brightens their overlap and produces a visible white flash.
-        fullImage.animate().cancel();
-        fullImage.setAlpha(1f);
-        fullImage.setImageBitmap(bitmap);
+        transitionViewerBitmap(bitmap);
+    }
+
+    private void transitionViewerBitmap(Bitmap bitmap) {
+        if (fullImage == null || root == null) return;
+        ImageView previous = fullImage;
+        ImageView next = new ImageView(this);
+        next.setBackgroundColor(theme.viewerBackground);
+        next.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        next.setFocusable(true);
+        next.setFocusableInTouchMode(true);
+        next.setImageBitmap(bitmap);
+        next.setAlpha(0f);
+        root.addView(next, new FrameLayout.LayoutParams(-1, -1));
+        fullImage = next;
+        previous.animate().cancel();
+        next.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
+        previous.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
+            if (previous.getParent() == root) root.removeView(previous);
+        }).start();
+        next.requestFocus();
     }
 
     private void fadeOutImage(ImageView image) {
