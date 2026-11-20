@@ -60,8 +60,9 @@ public final class MainActivity extends Activity {
     private static final int ORIGINAL_CACHE_CAPACITY = 9;
     private static final int SUPER_THUMBNAIL_SIZE = 8;
     private static final int SUPER_THUMBNAIL_CAPACITY = 2000;
-    private static final int SUPER_THUMBNAIL_BYTES = SUPER_THUMBNAIL_SIZE * SUPER_THUMBNAIL_SIZE * 2;
-    private static final int SUPER_THUMBNAIL_RECORD_BYTES = 32 + SUPER_THUMBNAIL_BYTES;
+    private static final int SUPER_THUMBNAIL_MAX_HEIGHT = 512;
+    private static final int SUPER_THUMBNAIL_MAX_BYTES = SUPER_THUMBNAIL_SIZE * SUPER_THUMBNAIL_MAX_HEIGHT * 2;
+    private static final int SUPER_THUMBNAIL_RECORD_BYTES = 36 + SUPER_THUMBNAIL_MAX_BYTES;
     static final int EXIT_HOLD_DURATION_MS = 1000;
     static final int LONG_PRESS_MS = 550;
     static final int HOLD_HINT_DELAY_MS = 150;
@@ -199,7 +200,8 @@ public final class MainActivity extends Activity {
     private Bitmap loadSuperThumbnail(Photo photo) {
         Integer slot = superThumbnailSlots.get(photo.uri.toString());
         if (slot == null || superThumbnailFile == null || !superThumbnailFile.isFile()) return null;
-        byte[] pixels = new byte[SUPER_THUMBNAIL_BYTES];
+        byte[] pixels;
+        int height;
         synchronized (superThumbnailLock) {
             try (RandomAccessFile file = new RandomAccessFile(superThumbnailFile, "r")) {
                 long offset = (long) slot * SUPER_THUMBNAIL_RECORD_BYTES;
@@ -208,10 +210,13 @@ public final class MainActivity extends Activity {
                 byte[] key = new byte[32];
                 file.readFully(key);
                 if (!java.util.Arrays.equals(key, superThumbnailKey(photo))) return null;
+                height = file.readInt();
+                if (height <= 0 || height > SUPER_THUMBNAIL_MAX_HEIGHT) return null;
+                pixels = new byte[SUPER_THUMBNAIL_SIZE * height * 2];
                 file.readFully(pixels);
             } catch (Exception ignored) { return null; }
         }
-        Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, SUPER_THUMBNAIL_SIZE, Bitmap.Config.RGB_565);
+        Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
         bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixels));
         return bitmap;
     }
@@ -225,9 +230,12 @@ public final class MainActivity extends Activity {
 
     private void storeSuperThumbnail(Photo photo, Bitmap source) {
         if (source == null || superThumbnailFile == null) return;
-        Bitmap scaled = Bitmap.createScaledBitmap(source, SUPER_THUMBNAIL_SIZE, SUPER_THUMBNAIL_SIZE, true);
+        int height = Math.max(1, Math.min(SUPER_THUMBNAIL_MAX_HEIGHT,
+                Math.round((float) source.getHeight() * SUPER_THUMBNAIL_SIZE / source.getWidth())));
+        Bitmap scaled = Bitmap.createScaledBitmap(source, SUPER_THUMBNAIL_SIZE, height, true);
         Bitmap rgb = scaled.getConfig() == Bitmap.Config.RGB_565 ? scaled : scaled.copy(Bitmap.Config.RGB_565, false);
-        java.nio.ByteBuffer pixelBuffer = java.nio.ByteBuffer.allocate(SUPER_THUMBNAIL_BYTES);
+        byte[] pixelBytes = new byte[SUPER_THUMBNAIL_SIZE * height * 2];
+        java.nio.ByteBuffer pixelBuffer = java.nio.ByteBuffer.wrap(pixelBytes);
         rgb.copyPixelsToBuffer(pixelBuffer);
         byte[] key = superThumbnailKey(photo);
         int slot;
@@ -239,7 +247,9 @@ public final class MainActivity extends Activity {
             try (RandomAccessFile file = new RandomAccessFile(superThumbnailFile, "rw")) {
                 file.seek((long) slot * SUPER_THUMBNAIL_RECORD_BYTES);
                 file.write(key);
-                file.write(pixelBuffer.array());
+                file.writeInt(height);
+                file.write(pixelBytes);
+                file.write(new byte[SUPER_THUMBNAIL_MAX_BYTES - pixelBytes.length]);
                 file.getFD().sync();
                 if (slot != existingSlot) {
                     for (java.util.Map.Entry<String, Integer> entry : superThumbnailSlots.entrySet())
