@@ -73,18 +73,12 @@ public final class MainActivity extends Activity {
     final ArrayList<Photo> photos = new ArrayList<>();
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
-    private final ExecutorService loader = Executors.newFixedThreadPool(3);
+    /** Live worker threads keyed by name, so the debug monitor can report their state. */
+    private final ConcurrentHashMap<String, Thread> debugThreads = new ConcurrentHashMap<>();
+    private final ExecutorService loader = Executors.newFixedThreadPool(3, workerFactory("load", Thread.NORM_PRIORITY));
     /** Single background thread so look-ahead thumbnail work never delays the visible image. */
-    private final ExecutorService prefetchLoader = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "thumbnail-prefetch");
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
-    private final ExecutorService digestLoader = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "thumbnail-digest");
-        thread.setPriority(Thread.MIN_PRIORITY);
-        return thread;
-    });
+    private final ExecutorService prefetchLoader = singleThreadPool("prefetch", Thread.MIN_PRIORITY);
+    private final ExecutorService digestLoader = singleThreadPool("digest", Thread.MIN_PRIORITY);
     private final ConcurrentHashMap<String, Boolean> pendingThumbnails = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
@@ -142,6 +136,10 @@ public final class MainActivity extends Activity {
     private ViewerController viewerController;
     private SettingsController settingsController;
     private ShareController shareController;
+    private DebugOverlay debugOverlay;
+    /** Last /proc self memory total (kB) and when it was sampled; reading it is too slow for every tick. */
+    private long debugPssKb;
+    private long debugPssAt;
     Theme theme;
 
     static final class Photo {
@@ -162,6 +160,7 @@ public final class MainActivity extends Activity {
         root.setBackground(theme.backdrop());
         setContentView(root);
         interaction = new InteractionSystem(this, root);
+        debugOverlay = new DebugOverlay(this, root);
         galleryController = new GalleryController(this, interaction);
         viewerController = new ViewerController(this, interaction);
         settingsController = new SettingsController(this, interaction);
@@ -1289,8 +1288,27 @@ public final class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         interaction.track(event);
+        if (handleDebugMonitorKey(event)) return true;
         if (deleteOverlay != null) return handleDeleteOverlayKey(event);
         return controllerFor(current).onKey(event) || super.dispatchKeyEvent(event);
+    }
+
+    /**
+     * LB+RB+START opens the debug monitor, START alone closes it. The chord is checked only on the
+     * START press, and its press/release never reaches the screen controller (START opens Settings).
+     */
+    private boolean handleDebugMonitorKey(KeyEvent event) {
+        int key = event.getKeyCode();
+        boolean start = key == KeyEvent.KEYCODE_BUTTON_START || key == KeyEvent.KEYCODE_MENU;
+        if (!start) return false;
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            if (debugOverlay.isVisible()) { debugOverlay.hide(); return true; }
+            if (interaction.isPressed(KeyEvent.KEYCODE_BUTTON_L1) && interaction.isPressed(KeyEvent.KEYCODE_BUTTON_R1)) {
+                debugOverlay.show();
+                return true;
+            }
+        }
+        return debugOverlay.isVisible();
     }
 
     private ScreenController controllerFor(Screen screen) {
@@ -1803,5 +1821,101 @@ public final class MainActivity extends Activity {
         viewerController.refreshHints();
     }
 
-    @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); loader.shutdownNow(); prefetchLoader.shutdownNow(); }
+    @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (debugOverlay != null) debugOverlay.hide(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); loader.shutdownNow(); prefetchLoader.shutdownNow(); }
+
+    // ---------------------------------------------------------------- debug monitor
+
+    private java.util.concurrent.ThreadFactory workerFactory(String prefix, int priority) {
+        final java.util.concurrent.atomic.AtomicInteger index = new java.util.concurrent.atomic.AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + "-" + index.incrementAndGet());
+            thread.setPriority(priority);
+            debugThreads.put(thread.getName(), thread);
+            return thread;
+        };
+    }
+
+    private java.util.concurrent.ThreadPoolExecutor singleThreadPool(String prefix, int priority) {
+        return new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(), workerFactory(prefix, priority));
+    }
+
+    /** Snapshot of memory, cache tiers, queues, and worker threads rendered by the debug overlay. */
+    String debugReport() {
+        Runtime runtime = Runtime.getRuntime();
+        long free = runtime.freeMemory();
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - debugPssAt >= 2000) {
+            android.os.Debug.MemoryInfo info = new android.os.Debug.MemoryInfo();
+            android.os.Debug.getMemoryInfo(info);
+            debugPssKb = info.getTotalPss();
+            debugPssAt = now;
+        }
+        StringBuilder out = new StringBuilder(640);
+        out.append("DEBUG MONITOR\n");
+        out.append("MEM   java ").append(mb(runtime.totalMemory() - free)).append(" / ")
+                .append(mb(runtime.totalMemory())).append(" MB  max ").append(mb(runtime.maxMemory()))
+                .append("  free ").append(mb(free)).append('\n');
+        out.append("      native ").append(mb(android.os.Debug.getNativeHeapAllocatedSize()))
+                .append(" MB  pss ").append(debugPssKb / 1024).append(" MB\n");
+
+        int superCount;
+        long superBytes = 0;
+        synchronized (superThumbnailLock) {
+            superCount = superThumbnails.size();
+            for (Bitmap bitmap : superThumbnails.values()) superBytes += bitmap.getByteCount();
+        }
+        java.util.Map<String, Bitmap> thumbnails = cache.snapshot();
+        java.util.Map<String, Bitmap> originals = originalCache.snapshot();
+        long originalBytes = 0;
+        for (Bitmap bitmap : originals.values()) originalBytes += bitmap.getByteCount();
+        long lookups = cache.hitCount() + cache.missCount();
+        int hitRate = lookups == 0 ? 0 : (int) (cache.hitCount() * 100 / lookups);
+        out.append("CACH  super ").append(superCount).append(" img  ").append(mb(superBytes)).append(" MB\n");
+        out.append("      thumb ").append(thumbnails.size()).append(" img  ").append(mb(cache.size()))
+                .append(" / ").append(mb(cache.maxSize())).append(" MB  hit ").append(hitRate).append("%\n");
+        out.append("      orig  ").append(originals.size()).append(" img  ").append(mb(originalBytes))
+                .append(" MB  cap ").append(ORIGINAL_CACHE_CAPACITY).append('\n');
+        out.append("QUEUE thumb ").append(pendingThumbnails.size()).append("  digest ").append(pendingDigests.size())
+                .append("  orig ").append(pendingOriginals.size()).append('\n');
+
+        out.append(poolLine("load", loader));
+        out.append(poolLine("prefetch", prefetchLoader));
+        out.append(poolLine("digest", digestLoader));
+
+        // One line per pool worth of live threads, so a stalled worker is visible at a glance.
+        out.append("THR   main ").append(threadState(Thread.currentThread()))
+                .append("  prefetch ").append(threadState(debugThreads.get("prefetch-1")))
+                .append("  digest ").append(threadState(debugThreads.get("digest-1"))).append('\n');
+        out.append("      load-1 ").append(threadState(debugThreads.get("load-1")))
+                .append("  load-2 ").append(threadState(debugThreads.get("load-2")))
+                .append("  load-3 ").append(threadState(debugThreads.get("load-3"))).append('\n');
+        out.append("SHARE ").append(shareServer == null ? "idle" : "serving").append('\n');
+        out.append("SCAN  ").append(scanInProgress ? "scanning" : "idle").append("  photos ").append(photos.size())
+                .append("  screen ").append(current.name().toLowerCase(Locale.US));
+        if (current == Screen.GALLERY && grid != null) out.append("  cells ").append(grid.getChildCount());
+        return out.toString();
+    }
+
+    private String poolLine(String label, ExecutorService pool) {
+        if (!(pool instanceof java.util.concurrent.ThreadPoolExecutor)) return "";
+        java.util.concurrent.ThreadPoolExecutor executor = (java.util.concurrent.ThreadPoolExecutor) pool;
+        return String.format(Locale.US, "POOL  %-9s %d/%d busy  q %d  done %d\n", label,
+                executor.getActiveCount(), executor.getPoolSize(),
+                executor.getQueue().size(), executor.getCompletedTaskCount());
+    }
+
+    private static String threadState(Thread thread) {
+        if (thread == null) return "idle";
+        switch (thread.getState()) {
+            case RUNNABLE: return "RUN";
+            case WAITING: return "WAIT";
+            case TIMED_WAITING: return "TIME";
+            case BLOCKED: return "BLOCK";
+            case TERMINATED: return "END";
+            default: return "NEW";
+        }
+    }
+
+    private static String mb(long bytes) { return String.format(Locale.US, "%.1f", bytes / 1048576f); }
 }
