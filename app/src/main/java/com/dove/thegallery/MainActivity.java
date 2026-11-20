@@ -60,6 +60,7 @@ public final class MainActivity extends Activity {
     private static final int ORIGINAL_CACHE_CAPACITY = 9;
     private static final int SUPER_THUMBNAIL_SIZE = 8;
     private static final int SUPER_THUMBNAIL_MAX_HEIGHT = 512;
+    private static final int VIEWER_PREFETCH_COUNT = 10;
     static final int EXIT_HOLD_DURATION_MS = 1000;
     static final int LONG_PRESS_MS = 550;
     static final int HOLD_HINT_DELAY_MS = 150;
@@ -73,6 +74,12 @@ public final class MainActivity extends Activity {
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
     private final ExecutorService loader = Executors.newFixedThreadPool(3);
+    /** Single background thread so look-ahead thumbnail work never delays the visible image. */
+    private final ExecutorService prefetchLoader = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "thumbnail-prefetch");
+        thread.setPriority(Thread.MIN_PRIORITY);
+        return thread;
+    });
     private final ExecutorService digestLoader = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "thumbnail-digest");
         thread.setPriority(Thread.MIN_PRIORITY);
@@ -125,6 +132,8 @@ public final class MainActivity extends Activity {
     private int shareBackdropIndex;
     private long shareBackdropGeneration;
     private int photoTransition;
+    /** Direction of the last viewer step (+1 / -1), consumed by displayPhoto for prefetching. */
+    int viewerStep;
     private View deleteOverlay;
     int displayMode = 1;
     private android.content.SharedPreferences preferences;
@@ -1196,6 +1205,9 @@ public final class MainActivity extends Activity {
         if (fullImage == null || photos.isEmpty()) return;
         Photo photo = photos.get(selected);
         int transition = ++photoTransition;
+        int step = viewerStep;
+        viewerStep = 0;
+        prefetchViewerThumbnails(step);
         fullImage.animate().cancel();
         fullImage.setAlpha(1f);
         Bitmap cachedOriginal = originalCache.get(photo.uri.toString());
@@ -1237,6 +1249,26 @@ public final class MainActivity extends Activity {
                 handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
             });
         });
+    }
+
+    private void prefetchViewerThumbnails(int step) {
+        if (step == 0 || photos.size() < 2) return;
+        for (int i = 1; i <= VIEWER_PREFETCH_COUNT; i++) {
+            int index = Math.floorMod(selected + step * i, photos.size());
+            final Photo photo = photos.get(index);
+            final String key = thumbnailKey(photo);
+            if (cache.get(key) != null) continue;
+            if (pendingThumbnails.putIfAbsent(key, Boolean.TRUE) != null) continue;
+            prefetchLoader.execute(() -> {
+                boolean acquired = false;
+                try {
+                    thumbnailSlots.acquire(); acquired = true;
+                    Bitmap bitmap = loadThumbnail(photo);
+                    if (bitmap != null) cache.put(key, bitmap);
+                } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(key); }
+            });
+        }
     }
 
     private void showOriginal(Photo photo, int transition, Bitmap bitmap) {
@@ -1771,5 +1803,5 @@ public final class MainActivity extends Activity {
         viewerController.refreshHints();
     }
 
-    @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); loader.shutdownNow(); }
+    @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); loader.shutdownNow(); prefetchLoader.shutdownNow(); }
 }
