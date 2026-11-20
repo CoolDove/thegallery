@@ -4,11 +4,13 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
 import android.graphics.Shader;
+import android.graphics.Path;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
@@ -72,7 +74,7 @@ final class Theme {
 
     int dp(float value) { return Math.round(value * density); }
 
-    /** Full-screen background: paper colour, oversized ghost tiles, and a faint accent bloom. */
+    /** Full-screen background: a warm-to-pink gradient with a subtle halftone texture. */
     Drawable backdrop() { return new BackdropDrawable(); }
 
     GradientDrawable solid(int color, float radiusDp) {
@@ -118,30 +120,34 @@ final class Theme {
     }
 
     private final class BackdropDrawable extends Drawable {
-        private final Paint tilePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint glowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint gradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dotPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path gradientPath = new Path();
 
         @Override public void draw(Canvas canvas) {
             Rect bounds = getBounds();
             canvas.drawColor(background);
-            float tile = dp(232);
-            float gap = dp(26);
-            float radius = dp(48);
-            float startX = -dp(72);
-            int columns = (int) Math.ceil((bounds.width() + dp(80)) / (tile + gap)) + 1;
-            tilePaint.setColor(backdropTile);
-            for (int row = 0; row < 3; row++) {
-                float top = dp(16) + row * (tile + gap) - (row == 1 ? dp(26) : 0);
-                for (int column = 0; column < columns; column++) {
-                    float left = startX + column * (tile + gap) + ((row & 1) == 1 ? (tile + gap) / 2f : 0);
-                    canvas.drawRoundRect(left, top, left + tile, top + tile, radius, radius, tilePaint);
+            gradientPath.reset();
+            gradientPath.moveTo(0, 0);
+            gradientPath.lineTo(bounds.width(), 0);
+            gradientPath.lineTo(bounds.width(), bounds.height());
+            gradientPath.lineTo(0, bounds.height());
+            gradientPath.close();
+            gradientPaint.setShader(new LinearGradient(0, 0, bounds.width(), bounds.height(),
+                    accentWarm, accent, Shader.TileMode.CLAMP));
+            canvas.drawPath(gradientPath, gradientPaint);
+
+            // Small, translucent gray dots keep the gradient lively without imposing tile shapes.
+            dotPaint.setShader(null);
+            dotPaint.setColor(night ? 0x3D000000 : 0x3DFFFFFF);
+            float spacing = dp(13);
+            float radius = Math.max(1f, dp(1.1f));
+            for (float y = spacing * 0.5f; y < bounds.height(); y += spacing) {
+                float offset = (((int) (y / spacing)) & 1) == 0 ? 0 : spacing * 0.5f;
+                for (float x = spacing * 0.5f + offset; x < bounds.width(); x += spacing) {
+                    canvas.drawCircle(x, y, radius, dotPaint);
                 }
             }
-            int glowCenter = (accent & 0x00FFFFFF) | 0x14000000;
-            int glowEdge = accent & 0x00FFFFFF;
-            glowPaint.setShader(new RadialGradient(bounds.width() * 0.82f, dp(30), dp(430),
-                    new int[]{glowCenter, glowEdge}, null, Shader.TileMode.CLAMP));
-            canvas.drawRect(0, 0, bounds.width(), bounds.height(), glowPaint);
         }
 
         @Override public void setAlpha(int alpha) { }
