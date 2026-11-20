@@ -1038,7 +1038,7 @@ public final class MainActivity extends Activity {
         enterScreen(Screen.VIEWER);
         root.removeAllViews();
         root.setBackgroundColor(theme.viewerBackground);
-        fullImage = new ImageView(this); fullImage.setBackgroundColor(theme.viewerBackground); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
+        fullImage = new ImageView(this); fullImage.setBackground(viewerPlaceholder()); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
@@ -1061,6 +1061,10 @@ public final class MainActivity extends Activity {
         }
         Bitmap thumbnail = cache.get(thumbnailKey(photo));
         if (thumbnail != null) transitionViewerBitmap(thumbnail);
+        else {
+            fullImage.setImageDrawable(null);
+            fullImage.setBackground(viewerPlaceholder());
+        }
         Runnable loadOriginal = () -> {
             if (current != Screen.VIEWER || transition != photoTransition || fullImage == null) return;
             Bitmap cached = originalCache.get(photo.uri.toString());
@@ -1094,7 +1098,7 @@ public final class MainActivity extends Activity {
         if (fullImage == null || root == null) return;
         ImageView previous = fullImage;
         ImageView next = new ImageView(this);
-        next.setBackgroundColor(theme.viewerBackground);
+        next.setBackground(viewerPlaceholder());
         next.setScaleType(ImageView.ScaleType.FIT_CENTER);
         next.setFocusable(true);
         next.setFocusableInTouchMode(true);
@@ -1108,6 +1112,12 @@ public final class MainActivity extends Activity {
             if (previous.getParent() == root) root.removeView(previous);
         }).start();
         next.requestFocus();
+    }
+
+    private android.graphics.drawable.Drawable viewerPlaceholder() {
+        return new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                new int[] {0xff55585d, 0xff34373b, 0xff45484d});
     }
 
     private void fadeOutImage(ImageView image) {
