@@ -3,6 +3,9 @@
     <!-- Light palette: soft paper background, white cards, vivid coral accent. -->
     <color name="gallery_background">#F6F7FB</color>
     <color name="gallery_backdrop_tile">#FCFCFE</color>
+    <color name="gallery_backdrop_start">#FFFFFF</color>
+    <color name="gallery_backdrop_end">#E9ECF2</color>
+    <color name="gallery_backdrop_dot">#1C121722</color>
     <color name="gallery_surface">#FFFFFF</color>
     <color name="gallery_surface_alt">#EEF0F6</color>
     <color name="gallery_surface_glass">#F2FFFFFF</color>
