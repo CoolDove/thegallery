@@ -33,6 +33,7 @@ The Gallery is a local image gallery for Android handheld gaming devices. The pr
 ## Controller and UI invariants
 
 - Face-button prompt cluster follows the physical layout: X above, Y left, A right, B below, fixed aligned centers. Keep Y's icon visible even with an empty caption; place the secondary D-pad wheel at lower left.
+- A held direction is its own input layer: the face buttons drop every normal action while any direction is down, leaving only X (with Up/Left) to jump to the top and B (with Down/Right) to jump to the bottom.
 - Hold-operated wheels open on the initiating face-button hold and close on its release. Toggle actions update underlying state and refresh the wheel label/grid in place—do not recreate the wheel or scrim. Keep short-press actions separate from hold actions.
 - Before changing screens or showing modal overlays, cancel in-progress holds and swallow their eventual key-up through `resetButtonHoldForUiChange()` / the shared interaction system.
 - Keep selected-item feedback clearly visible for controller users and preserve selection when returning between gallery and viewer.
