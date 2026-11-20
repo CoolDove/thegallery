@@ -9,6 +9,7 @@ import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.LinearGradient;
 import android.graphics.Shader;
+import android.graphics.drawable.GradientDrawable;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
@@ -70,6 +71,8 @@ public final class MainActivity extends Activity {
     static final String[] SORTS = {"Newest", "Oldest", "Name A-Z", "Name Z-A"};
     static final String[] DISPLAY_MODES = {"Simple", "Normal", "Detailed"};
     private static final long OVERLAY_FADE_MS = 140;
+    /** Height of the floating gallery top bar; the grid pads its top by this much. */
+    private static final int TOP_BAR_DP = 52;
     final ArrayList<Photo> photos = new ArrayList<>();
     private final ArrayList<Uri> sources = new ArrayList<>();
     private final Handler handler = new Handler();
@@ -710,8 +713,6 @@ public final class MainActivity extends Activity {
         root.setBackground(theme.backdrop());
         querySourceFileCounts(false);
         startDirectoryCountPolling();
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
 
         FrameLayout bar = new FrameLayout(this);
         bar.setPadding(dp(22), dp(10), dp(22), dp(2));
@@ -749,8 +750,6 @@ public final class MainActivity extends Activity {
         leftGroup.addView(refreshIndicator, refreshParams);
         bar.addView(leftGroup, new FrameLayout.LayoutParams(-2, -2, Gravity.LEFT | Gravity.CENTER_VERTICAL));
 
-        bar.addView(brand(), new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
-
         LinearLayout summaryPill = new LinearLayout(this);
         summaryPill.setGravity(Gravity.CENTER_VERTICAL);
         summaryPill.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
@@ -768,7 +767,6 @@ public final class MainActivity extends Activity {
         summary = photoCountSummary;
         bar.addView(summaryPill, new FrameLayout.LayoutParams(-2, -2, Gravity.RIGHT | Gravity.CENTER_VERTICAL));
         refreshSummary();
-        layout.addView(bar, new LinearLayout.LayoutParams(-1, -2));
 
         grid = new GridView(this);
         gridColumns = gridColumnsFor(displayMode);
@@ -777,7 +775,7 @@ public final class MainActivity extends Activity {
         grid.setHorizontalSpacing(dp(12));
         grid.setVerticalSpacing(dp(12));
         grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
-        grid.setPadding(dp(22), dp(8), dp(22), dp(18));
+        grid.setPadding(dp(22), dp(TOP_BAR_DP + 8), dp(22), dp(18));
         grid.setClipToPadding(false);
         grid.setClipChildren(false);
         grid.setChoiceMode(GridView.CHOICE_MODE_SINGLE);
@@ -789,7 +787,16 @@ public final class MainActivity extends Activity {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) { selected = position; updateGridHighlight(); }
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
-        layout.addView(grid, new LinearLayout.LayoutParams(-1, 0, 1)); root.addView(layout);
+        root.addView(grid, new FrameLayout.LayoutParams(-1, -1));
+
+        // Floating top bar: the grid keeps the full window and scrolls underneath it.
+        View barScrim = new View(this);
+        int scrimBase = theme.background & 0x00FFFFFF;
+        barScrim.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{scrimBase | 0xE6000000, scrimBase}));
+        root.addView(barScrim, new FrameLayout.LayoutParams(-1, dp(TOP_BAR_DP + 12), Gravity.TOP));
+        root.addView(bar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
+
         if (photos.isEmpty()) { empty("No images here.", true); return; }
         selected = Math.min(selected, photos.size() - 1);
         grid.setFocusable(true); grid.setFocusableInTouchMode(true);
