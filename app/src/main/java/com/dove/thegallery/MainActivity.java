@@ -85,9 +85,10 @@ public final class MainActivity extends Activity {
     private final ConcurrentHashMap<String, Boolean> pendingDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
-    private final android.util.LruCache<String, Bitmap> superThumbnailMemory = new android.util.LruCache<String, Bitmap>(4 * 1024 * 1024) {
+    private final android.util.LruCache<String, Bitmap> superThumbnailMemory = new android.util.LruCache<String, Bitmap>(20 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
     };
+    private final ConcurrentHashMap<String, byte[]> superThumbnailMemoryKeys = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Integer> superThumbnailSlots = new ConcurrentHashMap<>();
     private final Object superThumbnailLock = new Object();
     private File superThumbnailFile;
@@ -198,6 +199,44 @@ public final class MainActivity extends Activity {
             superThumbnailSlots.clear();
             nextSuperThumbnailSlot = 0;
         }
+        preloadSuperThumbnails();
+    }
+
+    private void preloadSuperThumbnails() {
+        if (superThumbnailFile == null || !superThumbnailFile.isFile()) return;
+        synchronized (superThumbnailLock) {
+            try (RandomAccessFile file = new RandomAccessFile(superThumbnailFile, "r")) {
+                for (java.util.Map.Entry<String, Integer> entry : superThumbnailSlots.entrySet()) {
+                    long offset = (long) entry.getValue() * SUPER_THUMBNAIL_RECORD_BYTES;
+                    if (file.length() < offset + SUPER_THUMBNAIL_RECORD_BYTES) continue;
+                    file.seek(offset);
+                    byte[] key = new byte[32];
+                    file.readFully(key);
+                    int height = file.readInt();
+                    if (height <= 0 || height > SUPER_THUMBNAIL_MAX_HEIGHT) continue;
+                    byte[] pixels = new byte[SUPER_THUMBNAIL_SIZE * height * 2];
+                    file.readFully(pixels);
+                    Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
+                    bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixels));
+                    String uri = entry.getKey();
+                    superThumbnailMemoryKeys.put(uri, key);
+                    superThumbnailMemory.put(uri, bitmap);
+                }
+            } catch (Exception ignored) {
+                superThumbnailMemory.evictAll();
+                superThumbnailMemoryKeys.clear();
+            }
+        }
+    }
+
+    private Bitmap getSuperThumbnail(Photo photo) {
+        String uri = photo.uri.toString();
+        Bitmap cached = superThumbnailMemory.get(uri);
+        byte[] storedKey = superThumbnailMemoryKeys.get(uri);
+        if (cached != null && storedKey != null && java.util.Arrays.equals(storedKey, superThumbnailKey(photo))) return cached;
+        if (cached != null) superThumbnailMemory.remove(uri);
+        superThumbnailMemoryKeys.remove(uri);
+        return loadSuperThumbnail(photo);
     }
 
     private Bitmap loadSuperThumbnail(Photo photo) {
@@ -221,6 +260,7 @@ public final class MainActivity extends Activity {
         }
         Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
         bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixels));
+        superThumbnailMemoryKeys.put(photo.uri.toString(), superThumbnailKey(photo));
         superThumbnailMemory.put(photo.uri.toString(), bitmap);
         return bitmap;
     }
@@ -268,6 +308,7 @@ public final class MainActivity extends Activity {
         if (scaled != source) scaled.recycle();
         Bitmap fallback = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
         fallback.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixelBytes));
+        superThumbnailMemoryKeys.put(photo.uri.toString(), key);
         superThumbnailMemory.put(photo.uri.toString(), fallback);
     }
 
@@ -947,8 +988,7 @@ public final class MainActivity extends Activity {
         String thumbnailKey = thumbnailKey(photo);
         cell.setTag(thumbnailKey);
         Bitmap bitmap = cache.get(thumbnailKey);
-        if (bitmap == null) bitmap = superThumbnailMemory.get(photo.uri.toString());
-        if (bitmap == null) bitmap = loadSuperThumbnail(photo);
+        if (bitmap == null) bitmap = getSuperThumbnail(photo);
         image.setImageBitmap(bitmap);
         if (cache.get(thumbnailKey) == null && pendingThumbnails.putIfAbsent(thumbnailKey, Boolean.TRUE) == null) {
             loader.execute(() -> {
@@ -956,8 +996,7 @@ public final class MainActivity extends Activity {
                 boolean acquired = false;
                 try {
                     thumbnailSlots.acquire(); acquired = true;
-                    Bitmap fallback = superThumbnailMemory.get(photo.uri.toString());
-                    if (fallback == null) fallback = loadSuperThumbnail(photo);
+                    Bitmap fallback = getSuperThumbnail(photo);
                     if (fallback == null) fallback = loadSuperThumbnailFromSource(photo);
                     if (fallback != null) {
                         Bitmap completedFallback = fallback;
@@ -982,8 +1021,7 @@ public final class MainActivity extends Activity {
                         View visibleChild = grid.getChildAt(position - visibleFirst);
                         if (visibleChild instanceof FrameLayout && thumbnailKey.equals(visibleChild.getTag())) {
                             ImageView failedImage = (ImageView) ((FrameLayout) visibleChild).getChildAt(0);
-                    Bitmap fallback = superThumbnailMemory.get(photo.uri.toString());
-                    if (fallback == null) fallback = loadSuperThumbnail(photo);
+                    Bitmap fallback = getSuperThumbnail(photo);
                             if (fallback != null) failedImage.setImageBitmap(fallback);
                             else { failedImage.setImageResource(android.R.drawable.ic_menu_report_image); failedImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE); }
                         }
@@ -1036,7 +1074,7 @@ public final class MainActivity extends Activity {
         } catch (Exception ignored) { return null; }
         if (decoded == null) return null;
         storeSuperThumbnail(photo, decoded);
-        Bitmap fallback = superThumbnailMemory.get(photo.uri.toString());
+        Bitmap fallback = getSuperThumbnail(photo);
         decoded.recycle();
         return fallback;
     }
@@ -1210,8 +1248,7 @@ public final class MainActivity extends Activity {
             return;
         }
         Bitmap thumbnail = cache.get(thumbnailKey(photo));
-        if (thumbnail == null) thumbnail = superThumbnailMemory.get(photo.uri.toString());
-        if (thumbnail == null) thumbnail = loadSuperThumbnail(photo);
+        if (thumbnail == null) thumbnail = getSuperThumbnail(photo);
         if (thumbnail != null) transitionViewerBitmap(thumbnail);
         else {
             fullImage.setImageDrawable(null);
