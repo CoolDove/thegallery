@@ -72,7 +72,6 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler();
     private final ExecutorService loader = Executors.newFixedThreadPool(3);
     private final ConcurrentHashMap<String, Boolean> pendingThumbnails = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
     private final Semaphore thumbnailSlots = new Semaphore(2);
     private final android.util.LruCache<String, Bitmap> cache = new android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
@@ -318,11 +317,6 @@ public final class MainActivity extends Activity {
                     }
                 }
                 photos.clear(); photos.addAll(found);
-                if (current == Screen.GALLERY) {
-                    for (Photo photo : photos) {
-                        if (photo.contentDigest.isEmpty()) loader.execute(() -> refreshPhotoDigest(photo));
-                    }
-                }
                 HashSet<String> availableUris = new HashSet<>();
                 for (Photo photo : photos) availableUris.add(photo.uri.toString());
                 selectedPhotoUris.retainAll(availableUris);
@@ -869,55 +863,6 @@ public final class MainActivity extends Activity {
 
     private String thumbnailKey(Photo photo) { return photo.uri + "|" + photo.modified + "|" + photo.name + "|" + photo.contentDigest; }
 
-    private String digestStream(InputStream input) throws Exception {
-        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-        byte[] buffer = new byte[64 * 1024];
-        int count;
-        while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
-        StringBuilder result = new StringBuilder(64);
-        for (byte value : digest.digest()) result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
-        return result.toString();
-    }
-
-    private String sourceDigest(Photo photo) throws Exception {
-        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
-            if (input == null) throw new java.io.IOException("Unable to open source image");
-            return digestStream(input);
-        }
-    }
-
-    private File thumbnailDigestFile(File thumbnail) { return new File(thumbnail.getPath() + ".sha256"); }
-
-    private String readThumbnailDigest(File thumbnail) {
-        File metadata = thumbnailDigestFile(thumbnail);
-        if (!metadata.isFile()) return null;
-        try {
-            byte[] bytes = java.nio.file.Files.readAllBytes(metadata.toPath());
-            String value = new String(bytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
-            return value.matches("[0-9a-f]{64}") ? value : null;
-        } catch (Exception ignored) { return null; }
-    }
-
-    private void writeThumbnailDigest(File thumbnail, String digest) {
-        File metadata = thumbnailDigestFile(thumbnail);
-        File temporary = new File(metadata.getPath() + ".tmp");
-        try (FileOutputStream output = new FileOutputStream(temporary)) {
-            output.write(digest.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-            output.flush();
-            if (!temporary.renameTo(metadata)) {
-                try (FileOutputStream fallback = new FileOutputStream(metadata)) {
-                    fallback.write(digest.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-                }
-                //noinspection ResultOfMethodCallIgnored
-                temporary.delete();
-            }
-        } catch (Exception ignored) {
-            // A missing digest only causes a later verification/rebuild.
-            //noinspection ResultOfMethodCallIgnored
-            temporary.delete();
-        }
-    }
-
     private File thumbnailFile(Photo photo) {
         String key = thumbnailKey(photo);
         try {
@@ -934,27 +879,7 @@ public final class MainActivity extends Activity {
         File file = thumbnailFile(photo);
         if (file.isFile()) {
             Bitmap cached = BitmapFactory.decodeFile(file.getAbsolutePath());
-            if (cached != null) {
-                        String key = thumbnailKey(photo);
-                if (verifiedThumbnailDigests.putIfAbsent(key, Boolean.TRUE) == null) {
-                    try {
-                        String actualDigest = sourceDigest(photo);
-                        if (actualDigest.equals(readThumbnailDigest(file))) {
-                            return cached;
-                        }
-                        cache.remove(key);
-                        cached.recycle();
-                        //noinspection ResultOfMethodCallIgnored
-                        file.delete();
-                        //noinspection ResultOfMethodCallIgnored
-                        thumbnailDigestFile(file).delete();
-                        verifiedThumbnailDigests.remove(key);
-                    } catch (Exception ignored) {
-                        // Keep serving the existing cached thumbnail if source access fails.
-                        return cached;
-                    }
-                } else return cached;
-            }
+            if (cached != null) return cached;
             //noinspection ResultOfMethodCallIgnored
             file.delete();
         }
@@ -977,8 +902,6 @@ public final class MainActivity extends Activity {
             decoded = thumbnail;
         } catch (Exception ignored) { return null; }
         Bitmap thumbnail = decoded;
-        String sourceDigest = null;
-        try { sourceDigest = sourceDigest(photo); } catch (Exception ignored) { }
         File directory = file.getParentFile();
         if (directory != null && (directory.isDirectory() || directory.mkdirs())) {
             File temporary = new File(directory, file.getName() + ".tmp");
@@ -990,7 +913,6 @@ public final class MainActivity extends Activity {
                         //noinspection ResultOfMethodCallIgnored
                         temporary.delete();
                     }
-                    if (sourceDigest != null) writeThumbnailDigest(file, sourceDigest);
                 }
             } catch (Exception ignored) {
                 // Disk caching is opportunistic; continue using the decoded thumbnail.
@@ -998,7 +920,6 @@ public final class MainActivity extends Activity {
                 temporary.delete();
             }
         }
-        if (sourceDigest != null) verifiedThumbnailDigests.put(thumbnailKey(photo), Boolean.TRUE);
         return thumbnail;
     }
 
@@ -1008,29 +929,6 @@ public final class MainActivity extends Activity {
         String format = photo.name.contains(".") ? photo.name.substring(photo.name.lastIndexOf('.') + 1).toUpperCase(java.util.Locale.ROOT) : "IMAGE";
         String date = photo.modified > 0 ? android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", photo.modified).toString() : "Time unavailable";
         return dimensions + "  •  " + date + "  •  " + format;
-    }
-
-    private void refreshPhotoDigest(Photo photo) {
-        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
-            if (input == null) return;
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[64 * 1024];
-            int count;
-            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
-            byte[] hash = digest.digest();
-            StringBuilder value = new StringBuilder(hash.length * 2);
-            for (byte part : hash) value.append(String.format(java.util.Locale.ROOT, "%02x", part & 0xff));
-            String previousDigest = photo.contentDigest;
-            photo.contentDigest = value.toString();
-            if (!previousDigest.isEmpty() && !previousDigest.equals(photo.contentDigest)) {
-                cache.remove(photo.uri + "|" + photo.modified + "|" + photo.name + "|" + previousDigest);
-            }
-            runOnUiThread(() -> {
-                if (current == Screen.GALLERY && photos.contains(photo) && grid != null) {
-                    ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
-                }
-            });
-        } catch (Exception ignored) { }
     }
 
     void openPhoto() {
