@@ -57,7 +57,6 @@ public final class MainActivity extends Activity {
     private static final int SHARE_PORT = 8765;
     private static final int SHARE_FALLBACK_PORTS = 20;
     private static final long PHOTO_EXIT_DELAY_MS = 200;
-    private static final long PHOTO_FADE_MS = 110;
     private static final int ORIGINAL_CACHE_CAPACITY = 9;
     private static final int SUPER_THUMBNAIL_SIZE = 8;
     private static final int SUPER_THUMBNAIL_CAPACITY = 2000;
@@ -121,12 +120,10 @@ public final class MainActivity extends Activity {
     int settingsFocus;
     private int gridColumns = 1;
     private ImageView fullImage;
-    private ImageView incomingImage;
     private Runnable shareBackdropCycle;
     private int shareBackdropIndex;
     private long shareBackdropGeneration;
     private int photoTransition;
-    private Runnable photoExitRunnable;
     private View deleteOverlay;
     int displayMode = 1;
     private android.content.SharedPreferences preferences;
@@ -1144,11 +1141,8 @@ public final class MainActivity extends Activity {
         if (fullImage == null || photos.isEmpty()) return;
         Photo photo = photos.get(selected);
         int transition = ++photoTransition;
-        ImageView previousImage = fullImage;
-        if (photoExitRunnable != null) handler.removeCallbacks(photoExitRunnable);
-        photoExitRunnable = null;
-        previousImage.animate().cancel();
-        previousImage.setAlpha(1f);
+        fullImage.animate().cancel();
+        fullImage.setAlpha(1f);
         Bitmap cachedOriginal = originalCache.get(photo.uri.toString());
         if (cachedOriginal != null) {
             transitionViewerBitmap(cachedOriginal);
@@ -1193,37 +1187,13 @@ public final class MainActivity extends Activity {
 
     private void transitionViewerBitmap(Bitmap bitmap) {
         if (fullImage == null || root == null) return;
-        ImageView previous = fullImage;
-        ImageView next = new ImageView(this);
-        next.setBackground(viewerPlaceholder());
-        next.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        next.setFocusable(true);
-        next.setFocusableInTouchMode(true);
-        next.setImageBitmap(bitmap);
-        next.setAlpha(0f);
-        root.addView(next, new FrameLayout.LayoutParams(-1, -1));
-        fullImage = next;
-        previous.animate().cancel();
-        next.animate().alpha(1f).setDuration(PHOTO_FADE_MS).start();
-        previous.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
-            if (previous.getParent() == root) root.removeView(previous);
-        }).start();
-        next.requestFocus();
+        fullImage.setImageBitmap(bitmap);
     }
 
     private android.graphics.drawable.Drawable viewerPlaceholder() {
         return new android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
                 new int[] {0xff55585d, 0xff34373b, 0xff45484d});
-    }
-
-    private void fadeOutImage(ImageView image) {
-        if (image == null) return;
-        image.animate().cancel();
-        image.animate().alpha(0f).setDuration(PHOTO_FADE_MS).withEndAction(() -> {
-            if (image.getParent() == root) root.removeView(image);
-            if (incomingImage == image) incomingImage = null;
-        }).start();
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
@@ -1739,7 +1709,6 @@ public final class MainActivity extends Activity {
         if (fullImage == null) { openPhoto(); return; }
         root.setBackgroundColor(theme.viewerBackground);
         fullImage.setBackgroundColor(theme.viewerBackground);
-        if (incomingImage != null) incomingImage.setBackgroundColor(theme.viewerBackground);
         viewerController.refreshHints();
     }
 
