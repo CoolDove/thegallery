@@ -108,8 +108,18 @@ final class GalleryController implements ScreenController {
 
         if (activity.grid != null && isDpadKey(key)) updateChordState();
 
-        if (gridReady && ((fastTop && key == KeyEvent.KEYCODE_BUTTON_X) || (fastBottom && key == KeyEvent.KEYCODE_BUTTON_B))) {
-            if (down && event.getRepeatCount() == 0) activity.scrollGridToEdge(fastTop, false);
+        // A held direction owns the input layer: face buttons drop their normal
+        // actions and only the fast-scroll chord survives.
+        if (gridReady && isFaceKey(key) && isDirectionHeld()) {
+            boolean topHeld = interaction.isPressed(KeyEvent.KEYCODE_DPAD_UP)
+                    || interaction.isPressed(KeyEvent.KEYCODE_DPAD_LEFT);
+            boolean bottomHeld = interaction.isPressed(KeyEvent.KEYCODE_DPAD_DOWN)
+                    || interaction.isPressed(KeyEvent.KEYCODE_DPAD_RIGHT);
+            if (down && event.getRepeatCount() == 0) {
+                if (topHeld && key == KeyEvent.KEYCODE_BUTTON_X) activity.scrollGridToEdge(true, false);
+                else if (bottomHeld && (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK))
+                    activity.scrollGridToEdge(false, false);
+            }
             return true;
         }
 
@@ -332,5 +342,16 @@ final class GalleryController implements ScreenController {
     private static boolean isDpadKey(int key) {
         return key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN
                 || key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+    }
+
+    private boolean isDirectionHeld() {
+        return interaction.isPressed(KeyEvent.KEYCODE_DPAD_UP) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_DOWN)
+                || interaction.isPressed(KeyEvent.KEYCODE_DPAD_LEFT) || interaction.isPressed(KeyEvent.KEYCODE_DPAD_RIGHT);
+    }
+
+    private static boolean isFaceKey(int key) {
+        return key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_B
+                || key == KeyEvent.KEYCODE_BUTTON_X || key == KeyEvent.KEYCODE_BUTTON_Y
+                || key == KeyEvent.KEYCODE_BACK;
     }
 }
