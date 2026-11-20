@@ -85,6 +85,9 @@ public final class MainActivity extends Activity {
     private final ConcurrentHashMap<String, Boolean> pendingDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
+    private final android.util.LruCache<String, Bitmap> superThumbnailMemory = new android.util.LruCache<String, Bitmap>(4 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
+    };
     private final ConcurrentHashMap<String, Integer> superThumbnailSlots = new ConcurrentHashMap<>();
     private final Object superThumbnailLock = new Object();
     private File superThumbnailFile;
@@ -218,6 +221,7 @@ public final class MainActivity extends Activity {
         }
         Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
         bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixels));
+        superThumbnailMemory.put(photo.uri.toString(), bitmap);
         return bitmap;
     }
 
@@ -262,6 +266,9 @@ public final class MainActivity extends Activity {
         }
         if (rgb != scaled) rgb.recycle();
         if (scaled != source) scaled.recycle();
+        Bitmap fallback = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
+        fallback.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixelBytes));
+        superThumbnailMemory.put(photo.uri.toString(), fallback);
     }
 
     private void persistSuperThumbnailIndex() {
@@ -940,14 +947,31 @@ public final class MainActivity extends Activity {
         String thumbnailKey = thumbnailKey(photo);
         cell.setTag(thumbnailKey);
         Bitmap bitmap = cache.get(thumbnailKey);
+        if (bitmap == null) bitmap = superThumbnailMemory.get(photo.uri.toString());
         if (bitmap == null) bitmap = loadSuperThumbnail(photo);
         image.setImageBitmap(bitmap);
-        if (bitmap == null && pendingThumbnails.putIfAbsent(thumbnailKey, Boolean.TRUE) == null) {
-            image.setImageDrawable(null);
+        if (cache.get(thumbnailKey) == null && pendingThumbnails.putIfAbsent(thumbnailKey, Boolean.TRUE) == null) {
             loader.execute(() -> {
                 Bitmap b = null;
                 boolean acquired = false;
-                try { thumbnailSlots.acquire(); acquired = true; b = loadThumbnail(photo); if (b != null) cache.put(thumbnailKey, b); }
+                try {
+                    thumbnailSlots.acquire(); acquired = true;
+                    Bitmap fallback = superThumbnailMemory.get(photo.uri.toString());
+                    if (fallback == null) fallback = loadSuperThumbnail(photo);
+                    if (fallback == null) fallback = loadSuperThumbnailFromSource(photo);
+                    if (fallback != null) {
+                        Bitmap completedFallback = fallback;
+                        runOnUiThread(() -> {
+                            if (grid == null) return;
+                            int firstVisible = grid.getFirstVisiblePosition();
+                            View visible = grid.getChildAt(position - firstVisible);
+                            if (visible instanceof FrameLayout && thumbnailKey.equals(visible.getTag()))
+                                ((ImageView) ((FrameLayout) visible).getChildAt(0)).setImageBitmap(completedFallback);
+                        });
+                    }
+                    b = loadThumbnail(photo);
+                    if (b != null) cache.put(thumbnailKey, b);
+                }
                 catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
                 finally { if (acquired) thumbnailSlots.release(); pendingThumbnails.remove(thumbnailKey); }
                 Bitmap result = b;
@@ -958,7 +982,8 @@ public final class MainActivity extends Activity {
                         View visibleChild = grid.getChildAt(position - visibleFirst);
                         if (visibleChild instanceof FrameLayout && thumbnailKey.equals(visibleChild.getTag())) {
                             ImageView failedImage = (ImageView) ((FrameLayout) visibleChild).getChildAt(0);
-                            Bitmap fallback = loadSuperThumbnail(photo);
+                    Bitmap fallback = superThumbnailMemory.get(photo.uri.toString());
+                    if (fallback == null) fallback = loadSuperThumbnail(photo);
                             if (fallback != null) failedImage.setImageBitmap(fallback);
                             else { failedImage.setImageResource(android.R.drawable.ic_menu_report_image); failedImage.setScaleType(ImageView.ScaleType.CENTER_INSIDE); }
                         }
@@ -988,6 +1013,32 @@ public final class MainActivity extends Activity {
         try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
             return image == null ? null : BitmapFactory.decodeStream(image, null, options);
         } catch (Exception ignored) { return null; }
+    }
+
+    private Bitmap loadSuperThumbnailFromSource(Photo photo) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            if (input == null) return null;
+            BitmapFactory.decodeStream(input, null, bounds);
+        } catch (Exception ignored) { return null; }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        int targetHeight = Math.max(1, Math.min(SUPER_THUMBNAIL_MAX_HEIGHT,
+                Math.round((float) bounds.outHeight * SUPER_THUMBNAIL_SIZE / bounds.outWidth)));
+        int sample = 1;
+        while (bounds.outWidth / (sample * 2) >= SUPER_THUMBNAIL_SIZE * 2
+                && bounds.outHeight / (sample * 2) >= Math.min(targetHeight * 2, SUPER_THUMBNAIL_MAX_HEIGHT * 2)) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        Bitmap decoded;
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            decoded = input == null ? null : BitmapFactory.decodeStream(input, null, options);
+        } catch (Exception ignored) { return null; }
+        if (decoded == null) return null;
+        storeSuperThumbnail(photo, decoded);
+        Bitmap fallback = superThumbnailMemory.get(photo.uri.toString());
+        decoded.recycle();
+        return fallback;
     }
 
     private String thumbnailKey(Photo photo) { return photo.uri + "|" + photo.modified + "|" + photo.name + "|" + photo.contentDigest; }
@@ -1159,6 +1210,7 @@ public final class MainActivity extends Activity {
             return;
         }
         Bitmap thumbnail = cache.get(thumbnailKey(photo));
+        if (thumbnail == null) thumbnail = superThumbnailMemory.get(photo.uri.toString());
         if (thumbnail == null) thumbnail = loadSuperThumbnail(photo);
         if (thumbnail != null) transitionViewerBitmap(thumbnail);
         else {
@@ -1180,6 +1232,10 @@ public final class MainActivity extends Activity {
         };
         if (initialFallback != null) handler.postDelayed(loadOriginal, PHOTO_EXIT_DELAY_MS);
         else loader.execute(() -> {
+            Bitmap fallback = loadSuperThumbnailFromSource(photo);
+            if (fallback != null) runOnUiThread(() -> {
+                if (current == Screen.VIEWER && transition == photoTransition && fullImage != null) fullImage.setImageBitmap(fallback);
+            });
             Bitmap decodedThumbnail = loadThumbnail(photo);
             if (decodedThumbnail != null) cache.put(thumbnailKey(photo), decodedThumbnail);
             runOnUiThread(() -> {
