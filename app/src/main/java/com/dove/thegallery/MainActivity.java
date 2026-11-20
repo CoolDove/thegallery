@@ -59,10 +59,7 @@ public final class MainActivity extends Activity {
     private static final long PHOTO_EXIT_DELAY_MS = 200;
     private static final int ORIGINAL_CACHE_CAPACITY = 9;
     private static final int SUPER_THUMBNAIL_SIZE = 8;
-    private static final int SUPER_THUMBNAIL_CAPACITY = 2000;
     private static final int SUPER_THUMBNAIL_MAX_HEIGHT = 512;
-    private static final int SUPER_THUMBNAIL_MAX_BYTES = SUPER_THUMBNAIL_SIZE * SUPER_THUMBNAIL_MAX_HEIGHT * 2;
-    private static final int SUPER_THUMBNAIL_RECORD_BYTES = 36 + SUPER_THUMBNAIL_MAX_BYTES;
     static final int EXIT_HOLD_DURATION_MS = 1000;
     static final int LONG_PRESS_MS = 550;
     static final int HOLD_HINT_DELAY_MS = 150;
@@ -85,14 +82,13 @@ public final class MainActivity extends Activity {
     private final ConcurrentHashMap<String, Boolean> pendingDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> verifiedThumbnailDigests = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Boolean> pendingOriginals = new ConcurrentHashMap<>();
-    private final android.util.LruCache<String, Bitmap> superThumbnailMemory = new android.util.LruCache<String, Bitmap>(20 * 1024 * 1024) {
-        @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
-    };
-    private final ConcurrentHashMap<String, byte[]> superThumbnailMemoryKeys = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Integer> superThumbnailSlots = new ConcurrentHashMap<>();
+    /** Every super thumbnail is resident in memory for the whole session; no capacity limit. */
+    private final HashMap<String, Bitmap> superThumbnails = new HashMap<>();
+    private final HashMap<String, byte[]> superThumbnailKeys = new HashMap<>();
     private final Object superThumbnailLock = new Object();
     private File superThumbnailFile;
-    private int nextSuperThumbnailSlot;
+    private File superThumbnailIndexFile;
+    private long superThumbnailEnd;
     private final Semaphore thumbnailSlots = new Semaphore(2);
     private final android.util.LruCache<String, Bitmap> cache = new android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getByteCount(); }
@@ -171,98 +167,61 @@ public final class MainActivity extends Activity {
         else empty("No images here.", true);
     }
 
+    /**
+     * Loads the whole super thumbnail store into memory at startup. The store file is append-only:
+     * each record is a 32 byte content key, an int height, then width*height RGB565 pixels.
+     * The index is append-only too, one "uri \t offset \t length" line per write.
+     */
     private void initializeSuperThumbnailCache() {
-        superThumbnailFile = new File(getFilesDir(), "super-thumbnails.bin");
-        File index = new File(getFilesDir(), "super-thumbnails.index");
-        if (index.isFile()) {
+        superThumbnailFile = new File(getFilesDir(), "super-thumbnails-v2.bin");
+        superThumbnailIndexFile = new File(getFilesDir(), "super-thumbnails-v2.index");
+        // Old fixed-slot format is incompatible; drop it.
+        //noinspection ResultOfMethodCallIgnored
+        new File(getFilesDir(), "super-thumbnails.bin").delete();
+        //noinspection ResultOfMethodCallIgnored
+        new File(getFilesDir(), "super-thumbnails.index").delete();
+        HashMap<String, long[]> entries = new HashMap<>();
+        if (superThumbnailIndexFile.isFile()) {
             try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
-                    new java.io.FileInputStream(index), java.nio.charset.StandardCharsets.UTF_8))) {
+                    new java.io.FileInputStream(superThumbnailIndexFile), java.nio.charset.StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    int separator = line.lastIndexOf('\t');
-                    if (separator <= 0) continue;
-                    int slot = Integer.parseInt(line.substring(separator + 1));
-                    if ("@next".equals(line.substring(0, separator))) {
-                        if (slot >= 0 && slot < SUPER_THUMBNAIL_CAPACITY) nextSuperThumbnailSlot = slot;
-                        continue;
-                    }
-                    if (slot >= 0 && slot < SUPER_THUMBNAIL_CAPACITY) {
-                        superThumbnailSlots.put(line.substring(0, separator), slot);
-                        nextSuperThumbnailSlot = Math.max(nextSuperThumbnailSlot, (slot + 1) % SUPER_THUMBNAIL_CAPACITY);
-                    }
+                    String[] parts = line.split("\t");
+                    if (parts.length != 3) continue;
+                    try {
+                        long offset = Long.parseLong(parts[1]);
+                        int length = Integer.parseInt(parts[2]);
+                        if (offset >= 0 && length > 36) entries.put(parts[0], new long[]{offset, length});
+                    } catch (NumberFormatException ignored) { }
                 }
-            } catch (Exception ignored) { superThumbnailSlots.clear(); nextSuperThumbnailSlot = 0; }
+            } catch (Exception ignored) { entries.clear(); }
         }
-        if (superThumbnailFile.isFile() && superThumbnailFile.length() % SUPER_THUMBNAIL_RECORD_BYTES != 0) {
-            //noinspection ResultOfMethodCallIgnored
-            superThumbnailFile.delete();
-            superThumbnailSlots.clear();
-            nextSuperThumbnailSlot = 0;
-        }
-        preloadSuperThumbnails();
-    }
-
-    private void preloadSuperThumbnails() {
-        if (superThumbnailFile == null || !superThumbnailFile.isFile()) return;
-        synchronized (superThumbnailLock) {
+        if (superThumbnailFile.isFile() && !entries.isEmpty()) {
             try (RandomAccessFile file = new RandomAccessFile(superThumbnailFile, "r")) {
-                for (java.util.Map.Entry<String, Integer> entry : superThumbnailSlots.entrySet()) {
-                    long offset = (long) entry.getValue() * SUPER_THUMBNAIL_RECORD_BYTES;
-                    if (file.length() < offset + SUPER_THUMBNAIL_RECORD_BYTES) continue;
+                long fileLength = file.length();
+                for (java.util.Map.Entry<String, long[]> entry : entries.entrySet()) {
+                    long offset = entry.getValue()[0];
+                    int length = (int) entry.getValue()[1];
+                    if (offset + length > fileLength) continue;
                     file.seek(offset);
                     byte[] key = new byte[32];
                     file.readFully(key);
                     int height = file.readInt();
-                    if (height <= 0 || height > SUPER_THUMBNAIL_MAX_HEIGHT) continue;
+                    if (height <= 0 || height > SUPER_THUMBNAIL_MAX_HEIGHT || 36 + SUPER_THUMBNAIL_SIZE * height * 2 != length) continue;
                     byte[] pixels = new byte[SUPER_THUMBNAIL_SIZE * height * 2];
                     file.readFully(pixels);
                     Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
                     bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixels));
-                    String uri = entry.getKey();
-                    superThumbnailMemoryKeys.put(uri, key);
-                    superThumbnailMemory.put(uri, bitmap);
+                    superThumbnailKeys.put(entry.getKey(), key);
+                    superThumbnails.put(entry.getKey(), bitmap);
+                    superThumbnailEnd = Math.max(superThumbnailEnd, offset + length);
                 }
             } catch (Exception ignored) {
-                superThumbnailMemory.evictAll();
-                superThumbnailMemoryKeys.clear();
+                superThumbnails.clear();
+                superThumbnailKeys.clear();
+                superThumbnailEnd = 0;
             }
-        }
-    }
-
-    private Bitmap getSuperThumbnail(Photo photo) {
-        String uri = photo.uri.toString();
-        Bitmap cached = superThumbnailMemory.get(uri);
-        byte[] storedKey = superThumbnailMemoryKeys.get(uri);
-        if (cached != null && storedKey != null && java.util.Arrays.equals(storedKey, superThumbnailKey(photo))) return cached;
-        if (cached != null) superThumbnailMemory.remove(uri);
-        superThumbnailMemoryKeys.remove(uri);
-        return loadSuperThumbnail(photo);
-    }
-
-    private Bitmap loadSuperThumbnail(Photo photo) {
-        Integer slot = superThumbnailSlots.get(photo.uri.toString());
-        if (slot == null || superThumbnailFile == null || !superThumbnailFile.isFile()) return null;
-        byte[] pixels;
-        int height;
-        synchronized (superThumbnailLock) {
-            try (RandomAccessFile file = new RandomAccessFile(superThumbnailFile, "r")) {
-                long offset = (long) slot * SUPER_THUMBNAIL_RECORD_BYTES;
-                if (file.length() < offset + SUPER_THUMBNAIL_RECORD_BYTES) return null;
-                file.seek(offset);
-                byte[] key = new byte[32];
-                file.readFully(key);
-                if (!java.util.Arrays.equals(key, superThumbnailKey(photo))) return null;
-                height = file.readInt();
-                if (height <= 0 || height > SUPER_THUMBNAIL_MAX_HEIGHT) return null;
-                pixels = new byte[SUPER_THUMBNAIL_SIZE * height * 2];
-                file.readFully(pixels);
-            } catch (Exception ignored) { return null; }
-        }
-        Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
-        bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixels));
-        superThumbnailMemoryKeys.put(photo.uri.toString(), superThumbnailKey(photo));
-        superThumbnailMemory.put(photo.uri.toString(), bitmap);
-        return bitmap;
+        } else superThumbnailEnd = superThumbnailFile.isFile() ? superThumbnailFile.length() : 0;
     }
 
     private byte[] superThumbnailKey(Photo photo) {
@@ -272,58 +231,55 @@ public final class MainActivity extends Activity {
         } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
 
+    /** Memory-only lookup: the entire store is resident, so this never touches disk or blocks. */
+    private Bitmap getSuperThumbnail(Photo photo) {
+        String uri = photo.uri.toString();
+        Bitmap cached;
+        byte[] storedKey;
+        synchronized (superThumbnailLock) {
+            cached = superThumbnails.get(uri);
+            storedKey = superThumbnailKeys.get(uri);
+        }
+        if (cached == null || storedKey == null) return null;
+        return java.util.Arrays.equals(storedKey, superThumbnailKey(photo)) ? cached : null;
+    }
+
     private void storeSuperThumbnail(Photo photo, Bitmap source) {
-        if (source == null || superThumbnailFile == null) return;
+        if (source == null || source.getWidth() <= 0 || source.getHeight() <= 0) return;
+        String uri = photo.uri.toString();
         int height = Math.max(1, Math.min(SUPER_THUMBNAIL_MAX_HEIGHT,
                 Math.round((float) source.getHeight() * SUPER_THUMBNAIL_SIZE / source.getWidth())));
         Bitmap scaled = Bitmap.createScaledBitmap(source, SUPER_THUMBNAIL_SIZE, height, true);
         Bitmap rgb = scaled.getConfig() == Bitmap.Config.RGB_565 ? scaled : scaled.copy(Bitmap.Config.RGB_565, false);
         byte[] pixelBytes = new byte[SUPER_THUMBNAIL_SIZE * height * 2];
-        java.nio.ByteBuffer pixelBuffer = java.nio.ByteBuffer.wrap(pixelBytes);
-        rgb.copyPixelsToBuffer(pixelBuffer);
+        rgb.copyPixelsToBuffer(java.nio.ByteBuffer.wrap(pixelBytes));
         byte[] key = superThumbnailKey(photo);
-        int slot;
         synchronized (superThumbnailLock) {
-            Integer existing = superThumbnailSlots.get(photo.uri.toString());
-            int existingSlot = existing == null ? -1 : existing;
-            slot = existing == null ? nextSuperThumbnailSlot : existing;
-            if (existing != null) slot = nextSuperThumbnailSlot;
+            byte[] existing = superThumbnailKeys.get(uri);
+            if (existing != null && java.util.Arrays.equals(existing, key) && superThumbnails.containsKey(uri)) {
+                if (rgb != scaled) rgb.recycle();
+                if (scaled != source) scaled.recycle();
+                return;
+            }
+            Bitmap bitmap = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
+            bitmap.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixelBytes));
+            superThumbnailKeys.put(uri, key);
+            superThumbnails.put(uri, bitmap);
+            int length = 36 + pixelBytes.length;
+            long offset = superThumbnailEnd;
             try (RandomAccessFile file = new RandomAccessFile(superThumbnailFile, "rw")) {
-                file.seek((long) slot * SUPER_THUMBNAIL_RECORD_BYTES);
+                file.seek(offset);
                 file.write(key);
                 file.writeInt(height);
                 file.write(pixelBytes);
-                file.write(new byte[SUPER_THUMBNAIL_MAX_BYTES - pixelBytes.length]);
-                file.getFD().sync();
-                if (slot != existingSlot) {
-                    for (java.util.Map.Entry<String, Integer> entry : superThumbnailSlots.entrySet())
-                        if (!entry.getKey().equals(photo.uri.toString()) && entry.getValue() == slot) superThumbnailSlots.remove(entry.getKey(), entry.getValue());
+                superThumbnailEnd = offset + length;
+                try (java.io.FileOutputStream index = new java.io.FileOutputStream(superThumbnailIndexFile, true)) {
+                    index.write((uri + "\t" + offset + "\t" + length + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
-                superThumbnailSlots.put(photo.uri.toString(), slot);
-                if (slot == nextSuperThumbnailSlot) nextSuperThumbnailSlot = (slot + 1) % SUPER_THUMBNAIL_CAPACITY;
-                persistSuperThumbnailIndex();
             } catch (Exception ignored) { }
         }
         if (rgb != scaled) rgb.recycle();
         if (scaled != source) scaled.recycle();
-        Bitmap fallback = Bitmap.createBitmap(SUPER_THUMBNAIL_SIZE, height, Bitmap.Config.RGB_565);
-        fallback.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(pixelBytes));
-        superThumbnailMemoryKeys.put(photo.uri.toString(), key);
-        superThumbnailMemory.put(photo.uri.toString(), fallback);
-    }
-
-    private void persistSuperThumbnailIndex() {
-        File temporary = new File(getFilesDir(), "super-thumbnails.index.tmp");
-        File index = new File(getFilesDir(), "super-thumbnails.index");
-        try (java.io.BufferedWriter writer = new java.io.BufferedWriter(new java.io.OutputStreamWriter(
-                new FileOutputStream(temporary), java.nio.charset.StandardCharsets.UTF_8))) {
-            writer.write("@next\t" + nextSuperThumbnailSlot + "\n");
-            for (java.util.Map.Entry<String, Integer> entry : superThumbnailSlots.entrySet())
-                writer.write(entry.getKey() + "\t" + entry.getValue() + "\n");
-        } catch (Exception ignored) { return; }
-        if (index.exists() && !index.delete()) return;
-        //noinspection ResultOfMethodCallIgnored
-        temporary.renameTo(index);
     }
 
     private void empty(String text, boolean allowPicker) {
