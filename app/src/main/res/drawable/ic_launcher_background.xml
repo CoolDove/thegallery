@@ -6,7 +6,7 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Warm orange gradient, corner tiles, and a coral bloom. -->
+    <!-- Warm orange gradient; keep the corners clean under square launcher masks. -->
     <path
         android:pathData="M0.00,0.00 H108.00 V108.00 H0.00 Z">
         <aapt:attr name="android:fillColor">
@@ -25,30 +25,6 @@
                 <item
                     android:offset="1"
                     android:color="#FFF2A257" />
-            </gradient>
-        </aapt:attr>
-    </path>
-    <path android:pathData="M-8.00,-14.00 H16.00 A10.00,10.00 0 0 1 26.00,-4.00 V20.00 A10.00,10.00 0 0 1 16.00,30.00 H-8.00 A10.00,10.00 0 0 1 -18.00,20.00 V-4.00 A10.00,10.00 0 0 1 -8.00,-14.00 Z"
-        android:fillColor="#FFFFF8ED" />
-    <path android:pathData="M90.00,76.00 H114.00 A10.00,10.00 0 0 1 124.00,86.00 V110.00 A10.00,10.00 0 0 1 114.00,120.00 H90.00 A10.00,10.00 0 0 1 80.00,110.00 V86.00 A10.00,10.00 0 0 1 90.00,76.00 Z"
-        android:fillColor="#FFFFF8ED" />
-    <path
-        android:pathData="M0.00,0.00 H108.00 V108.00 H0.00 Z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="radial"
-                android:centerX="84.24"
-                android:centerY="17.28"
-                android:gradientRadius="54">
-                <item
-                    android:offset="0"
-                    android:color="#24EC4E86" />
-                <item
-                    android:offset="0.6"
-                    android:color="#0DEC4E86" />
-                <item
-                    android:offset="1"
-                    android:color="#00EC4E86" />
             </gradient>
         </aapt:attr>
     </path>
