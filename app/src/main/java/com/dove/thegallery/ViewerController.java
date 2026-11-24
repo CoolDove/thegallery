@@ -2,7 +2,7 @@ package com.dove.thegallery;
 
 import android.view.KeyEvent;
 
-/** Full-screen viewer input: image stepping, back, and delete-by-hold. */
+/** Full-screen viewer input: image stepping, zoom/pan, info overlay, back, and delete-by-hold. */
 final class ViewerController implements ScreenController {
     private final MainActivity activity;
     private final InteractionSystem interaction;
@@ -16,21 +16,13 @@ final class ViewerController implements ScreenController {
 
     @Override public void refreshHints() {
         if (activity.current != Screen.VIEWER) return;
-        int held = interaction.heldKey();
-        if (held == KeyEvent.KEYCODE_BUTTON_B || held == KeyEvent.KEYCODE_BACK) {
-            interaction.show(HintPanel.face()
-                    .b("Exit", MainActivity.EXIT_HOLD_DURATION_MS, null));
-        } else if (held == KeyEvent.KEYCODE_BUTTON_X) {
-            interaction.show(HintPanel.face()
-                    .x("Delete", MainActivity.LONG_PRESS_MS, null)
-                    .b("Back", 0, null));
-        } else if (held == KeyEvent.KEYCODE_BUTTON_Y) {
-            interaction.show(HintPanel.face()
-                    .y("Share", MainActivity.LONG_PRESS_MS, null)
-                    .b("Back", 0, null));
-        } else {
-            interaction.hidePanel();
-        }
+        boolean adjusted = activity.viewerIsAdjusted();
+        interaction.show(HintPanel.face()
+                .x("Delete", MainActivity.LONG_PRESS_MS, null)
+                .y("Share", MainActivity.LONG_PRESS_MS, null)
+                .a(activity.viewerInfoVisible() ? "Hide info" : "Info", 0, activity::toggleViewerInfo)
+                .b(adjusted ? "Fit" : "Exit", adjusted ? 0 : MainActivity.EXIT_HOLD_DURATION_MS,
+                        adjusted ? activity::resetViewerFit : activity::showGrid));
     }
 
     @Override public boolean onKey(KeyEvent event) {
@@ -44,10 +36,16 @@ final class ViewerController implements ScreenController {
 
         boolean down = action == KeyEvent.ACTION_DOWN;
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+            // Away from best fit, B restores the size and position instead of leaving.
             if (down) {
                 if (event.getRepeatCount() == 0) {
-                    interaction.beginHold(key, MainActivity.HOLD_HINT_DELAY_MS, 0, MainActivity.EXIT_HOLD_DURATION_MS,
-                            this::refreshHints, null, activity::finish);
+                    if (activity.viewerIsAdjusted()) {
+                        activity.resetViewerFit();
+                        refreshHints();
+                    } else {
+                        interaction.beginHold(key, MainActivity.HOLD_HINT_DELAY_MS, 0, MainActivity.EXIT_HOLD_DURATION_MS,
+                                this::refreshHints, null, activity::finish);
+                    }
                 }
             } else if (action == KeyEvent.ACTION_UP) {
                 boolean initiated = interaction.heldKey() == key;
@@ -90,13 +88,25 @@ final class ViewerController implements ScreenController {
             return true;
         }
 
-        if (key == KeyEvent.KEYCODE_BUTTON_A) return true;
+        if (key == KeyEvent.KEYCODE_BUTTON_A) {
+            if (down && event.getRepeatCount() == 0) activity.toggleViewerInfo();
+            return true;
+        }
+
+        if (down && (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN)) {
+            if (event.getRepeatCount() == 0) {
+                activity.viewerZoom(key == KeyEvent.KEYCODE_DPAD_UP
+                        ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
+            }
+            return true;
+        }
 
         if (down && !activity.photos.isEmpty()
                 && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             activity.viewerStep = key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1;
             activity.selected = Math.floorMod(activity.selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), activity.photos.size());
             activity.displayPhoto();
+            refreshHints();
             return true;
         }
         return false;

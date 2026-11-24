@@ -16,7 +16,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.provider.DocumentsContract;
 import android.view.Gravity;
+import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
@@ -62,6 +64,11 @@ public final class MainActivity extends Activity {
     private static final int SUPER_THUMBNAIL_SIZE = 8;
     private static final int SUPER_THUMBNAIL_MAX_HEIGHT = 512;
     private static final int VIEWER_PREFETCH_COUNT = 10;
+    /** Short enough to stay immediate, long enough to read as a snap onto 100% or best fit. */
+    private static final long VIEWER_ZOOM_SNAP_MS = 110;
+    private static final float VIEWER_STICK_DEADZONE = 0.2f;
+    /** Full stick deflection pans this many viewport widths per second. */
+    private static final float VIEWER_PAN_WIDTHS_PER_SECOND = 1.1f;
     static final int EXIT_HOLD_DURATION_MS = 1000;
     static final int LONG_PRESS_MS = 550;
     static final int HOLD_HINT_DELAY_MS = 150;
@@ -125,6 +132,19 @@ public final class MainActivity extends Activity {
     int settingsFocus;
     private int gridColumns = 1;
     private ImageView fullImage;
+    /** Viewer zoom/pan state; reset whenever the shown photo changes. */
+    private final ViewerImageTransform viewerTransform = new ViewerImageTransform();
+    private LinearLayout viewerInfo;
+    private TextView viewerInfoName;
+    private TextView viewerInfoMeta;
+    private TextView viewerInfoSub;
+    private TextView viewerInfoZoom;
+    private boolean viewerInfoVisible;
+    private long viewerInfoGeneration;
+    private Runnable viewerZoomAnimation;
+    private Runnable viewerPanTick;
+    private long viewerPanAt;
+    private float viewerPanX, viewerPanY;
     private Runnable shareBackdropCycle;
     private int shareBackdropIndex;
     private long shareBackdropGeneration;
@@ -503,6 +523,9 @@ public final class MainActivity extends Activity {
 
     @Override protected void onPause() {
         super.onPause();
+        stopViewerPan();
+        viewerPanX = 0f;
+        viewerPanY = 0f;
     }
 
     private void startDirectoryCountPolling() {
@@ -1200,7 +1223,19 @@ public final class MainActivity extends Activity {
         enterScreen(Screen.VIEWER);
         root.removeAllViews();
         root.setBackgroundColor(theme.viewerBackground);
-        fullImage = new ImageView(this); fullImage.setBackground(viewerPlaceholder()); fullImage.setScaleType(ImageView.ScaleType.FIT_CENTER); fullImage.setFocusable(true); fullImage.setFocusableInTouchMode(true); root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
+        viewerTransform.reset();
+        viewerInfo = null;
+        viewerInfoVisible = false;
+        fullImage = new ImageView(this);
+        fullImage.setBackground(viewerPlaceholder());
+        fullImage.setScaleType(ImageView.ScaleType.MATRIX);
+        fullImage.setFocusable(true);
+        fullImage.setFocusableInTouchMode(true);
+        fullImage.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            viewerTransform.setViewport(right - left, bottom - top);
+            applyViewerMatrix();
+        });
+        root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
         photoTransition++;
         fullImage.setAlpha(1f);
         displayPhoto(); fullImage.requestFocus();
@@ -1213,6 +1248,8 @@ public final class MainActivity extends Activity {
         int transition = ++photoTransition;
         int step = viewerStep;
         viewerStep = 0;
+        viewerTransform.reset();
+        refreshViewerInfo();
         prefetchViewerThumbnails(step);
         fullImage.animate().cancel();
         fullImage.setAlpha(1f);
@@ -1245,7 +1282,7 @@ public final class MainActivity extends Activity {
         else loader.execute(() -> {
             Bitmap fallback = loadSuperThumbnailFromSource(photo);
             if (fallback != null) runOnUiThread(() -> {
-                if (current == Screen.VIEWER && transition == photoTransition && fullImage != null) fullImage.setImageBitmap(fallback);
+                if (current == Screen.VIEWER && transition == photoTransition && fullImage != null) transitionViewerBitmap(fallback);
             });
             Bitmap decodedThumbnail = loadThumbnail(photo);
             if (decodedThumbnail != null) cache.put(thumbnailKey(photo), decodedThumbnail);
@@ -1285,12 +1322,280 @@ public final class MainActivity extends Activity {
     private void transitionViewerBitmap(Bitmap bitmap) {
         if (fullImage == null || root == null) return;
         fullImage.setImageBitmap(bitmap);
+        viewerTransform.setImage(bitmap.getWidth(), bitmap.getHeight());
+        applyViewerMatrix();
     }
 
     private android.graphics.drawable.Drawable viewerPlaceholder() {
         return new android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
                 new int[] {0xff55585d, 0xff34373b, 0xff45484d});
+    }
+
+    // ---------------------------------------------------------------- viewer zoom, pan, info
+
+    private void applyViewerMatrix() {
+        if (fullImage == null) return;
+        fullImage.setImageMatrix(viewerTransform.matrix());
+        if (viewerInfoZoom != null) viewerInfoZoom.setText(viewerZoomLabel());
+    }
+
+    boolean viewerIsZoomed() { return viewerTransform.isZoomed(); }
+
+    boolean viewerIsAdjusted() { return viewerTransform.isAdjusted(); }
+
+    boolean viewerInfoVisible() { return viewerInfoVisible; }
+
+    String viewerZoomLabel() {
+        int percent = viewerTransform.percent();
+        if (viewerTransform.isFit()) return "Best fit (" + percent + "%)";
+        return "Zoom " + percent + "%";
+    }
+
+    /** One D-pad zoom press; a step that crosses 100% or best fit snaps onto that size. */
+    void viewerZoom(int direction) {
+        if (current != Screen.VIEWER) return;
+        ViewerImageTransform.ZoomStep step = viewerTransform.zoomStep(direction);
+        if (!step.changed) return;
+        if (step.snapped) animateViewerScale(step.from, step.to);
+        else {
+            viewerTransform.setScale(step.to);
+            applyViewerMatrix();
+        }
+        viewerController.refreshHints();
+    }
+
+    /** B on an image that is not at best fit: back to best fit, recentred. */
+    void resetViewerFit() {
+        if (current != Screen.VIEWER || !viewerTransform.isAdjusted()) return;
+        animateViewerScale(viewerTransform.scale(), viewerTransform.fitScale());
+        viewerController.refreshHints();
+    }
+
+    private void animateViewerScale(float from, float to) {
+        if (viewerZoomAnimation != null) handler.removeCallbacks(viewerZoomAnimation);
+        final long start = android.os.SystemClock.uptimeMillis();
+        viewerZoomAnimation = new Runnable() {
+            @Override public void run() {
+                if (current != Screen.VIEWER || fullImage == null) { viewerZoomAnimation = null; return; }
+                float t = Math.min(1f, (android.os.SystemClock.uptimeMillis() - start) / (float) VIEWER_ZOOM_SNAP_MS);
+                float eased = t * t * (3f - 2f * t);
+                viewerTransform.setScale(from + (to - from) * eased);
+                applyViewerMatrix();
+                if (t < 1f) handler.postDelayed(this, 16);
+                else {
+                    viewerZoomAnimation = null;
+                    if (viewerController != null) viewerController.refreshHints();
+                }
+            }
+        };
+        handler.post(viewerZoomAnimation);
+    }
+
+    private void stopViewerZoomAnimation() {
+        if (viewerZoomAnimation != null) handler.removeCallbacks(viewerZoomAnimation);
+        viewerZoomAnimation = null;
+    }
+
+    /** Either analog stick pans an image that is larger than best fit. */
+    @Override public boolean onGenericMotionEvent(MotionEvent event) {
+        if (current == Screen.VIEWER && viewerTransform.isZoomed()
+                && (event.getSource() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
+            readViewerStick(event);
+            if (viewerPanX == 0f && viewerPanY == 0f) stopViewerPan();
+            else startViewerPan();
+            return true;
+        }
+        return super.onGenericMotionEvent(event);
+    }
+
+    private void readViewerStick(MotionEvent event) {
+        float leftX = event.getAxisValue(MotionEvent.AXIS_X), leftY = event.getAxisValue(MotionEvent.AXIS_Y);
+        float rightX = event.getAxisValue(MotionEvent.AXIS_Z), rightY = event.getAxisValue(MotionEvent.AXIS_RZ);
+        float alternateX = event.getAxisValue(MotionEvent.AXIS_RX), alternateY = event.getAxisValue(MotionEvent.AXIS_RY);
+        if (rightX * rightX + rightY * rightY < alternateX * alternateX + alternateY * alternateY) {
+            rightX = alternateX;
+            rightY = alternateY;
+        }
+        if (rightX * rightX + rightY * rightY > leftX * leftX + leftY * leftY) {
+            leftX = rightX;
+            leftY = rightY;
+        }
+        viewerPanX = deadzone(leftX);
+        viewerPanY = deadzone(leftY);
+    }
+
+    private static float deadzone(float value) {
+        float magnitude = Math.abs(value);
+        if (magnitude <= VIEWER_STICK_DEADZONE) return 0f;
+        return Math.signum(value) * Math.min(1f, (magnitude - VIEWER_STICK_DEADZONE) / (1f - VIEWER_STICK_DEADZONE));
+    }
+
+    private void startViewerPan() {
+        if (viewerPanTick != null) return;
+        viewerPanAt = android.os.SystemClock.uptimeMillis();
+        viewerPanTick = new Runnable() {
+            @Override public void run() {
+                viewerPanTick = null;
+                if (current != Screen.VIEWER || !viewerTransform.isZoomed()) {
+                    viewerPanX = 0f;
+                    viewerPanY = 0f;
+                    return;
+                }
+                long now = android.os.SystemClock.uptimeMillis();
+                float seconds = Math.min(0.05f, (now - viewerPanAt) / 1000f);
+                viewerPanAt = now;
+                float speed = Math.max(1, fullImage == null ? 1 : fullImage.getWidth()) * VIEWER_PAN_WIDTHS_PER_SECOND;
+                if (viewerTransform.panBy(viewerPanX * speed * seconds, viewerPanY * speed * seconds)) applyViewerMatrix();
+                if (viewerPanX == 0f && viewerPanY == 0f) return;
+                viewerPanTick = this;
+                handler.postDelayed(this, 16);
+            }
+        };
+        handler.post(viewerPanTick);
+    }
+
+    private void stopViewerPan() {
+        if (viewerPanTick != null) handler.removeCallbacks(viewerPanTick);
+        viewerPanTick = null;
+    }
+
+    void toggleViewerInfo() {
+        if (current != Screen.VIEWER) return;
+        setViewerInfoVisible(!viewerInfoVisible);
+        viewerController.refreshHints();
+    }
+
+    private void setViewerInfoVisible(boolean visible) {
+        if (current != Screen.VIEWER) return;
+        if (visible) {
+            if (viewerInfo == null) buildViewerInfo();
+            viewerInfoVisible = true;
+            viewerInfo.setVisibility(View.VISIBLE);
+            viewerInfo.animate().cancel();
+            viewerInfo.setAlpha(0f);
+            viewerInfo.animate().alpha(1f).setDuration(OVERLAY_FADE_MS).start();
+            refreshViewerInfo();
+        } else {
+            viewerInfoVisible = false;
+            viewerInfoGeneration++;
+            if (viewerInfo != null) {
+                viewerInfo.animate().cancel();
+                viewerInfo.animate().alpha(0f).setDuration(OVERLAY_FADE_MS)
+                        .withEndAction(() -> {
+                            if (viewerInfo != null && !viewerInfoVisible) viewerInfo.setVisibility(View.GONE);
+                        })
+                        .start();
+            }
+        }
+    }
+
+    private void buildViewerInfo() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(20), dp(13), dp(20), dp(13));
+        card.setBackground(theme.bordered(theme.surfaceGlass, 18f, 1f, theme.outline));
+        card.setElevation(dp(8));
+        card.setClipToOutline(true);
+
+        viewerInfoName = label("", 16);
+        viewerInfoName.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        viewerInfoName.setPadding(0, 0, 0, 0);
+        viewerInfoName.setSingleLine(true);
+        viewerInfoName.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        card.addView(viewerInfoName, new LinearLayout.LayoutParams(dp(360), -2));
+
+        viewerInfoMeta = viewerInfoLine(13, theme.textSecondary);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.topMargin = dp(5);
+        card.addView(viewerInfoMeta, metaParams);
+
+        viewerInfoSub = viewerInfoLine(12, theme.textMuted);
+        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(-1, -2);
+        subParams.topMargin = dp(2);
+        card.addView(viewerInfoSub, subParams);
+
+        viewerInfoZoom = viewerInfoLine(12, theme.accent);
+        LinearLayout.LayoutParams zoomParams = new LinearLayout.LayoutParams(-1, -2);
+        zoomParams.topMargin = dp(8);
+        card.addView(viewerInfoZoom, zoomParams);
+
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(-2, -2, Gravity.LEFT | Gravity.TOP);
+        cardParams.leftMargin = dp(26);
+        cardParams.topMargin = dp(22);
+        root.addView(card, cardParams);
+        viewerInfo = card;
+    }
+
+    private TextView viewerInfoLine(int size, int color) {
+        TextView line = label("", size);
+        line.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
+        line.setPadding(0, 0, 0, 0);
+        line.setTextColor(color);
+        line.setSingleLine(true);
+        line.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        return line;
+    }
+
+    /** Refreshes the overlay content for the selected photo; safe when the overlay is closed. */
+    private void refreshViewerInfo() {
+        if (viewerInfo == null || photos.isEmpty()) return;
+        final Photo photo = photos.get(Math.max(0, Math.min(selected, photos.size() - 1)));
+        final long generation = ++viewerInfoGeneration;
+        viewerInfoName.setText(photo.name);
+        viewerInfoMeta.setText("Reading details…");
+        viewerInfoSub.setText(imageFormat(photo) + " · " + imageDate(photo)
+                + " · " + (selected + 1) + " / " + photos.size());
+        viewerInfoZoom.setText(viewerZoomLabel());
+        loader.execute(() -> {
+            String details = loadPhotoDetails(photo);
+            runOnUiThread(() -> {
+                if (generation != viewerInfoGeneration || viewerInfoMeta == null) return;
+                viewerInfoMeta.setText(details);
+            });
+        });
+    }
+
+    /** True pixel dimensions and byte size, read off the UI thread. */
+    private String loadPhotoDetails(Photo photo) {
+        String dimensions = null;
+        long bytes = -1;
+        try (InputStream input = getContentResolver().openInputStream(photo.uri)) {
+            if (input != null) {
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeStream(input, null, bounds);
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) dimensions = bounds.outWidth + " × " + bounds.outHeight;
+            }
+        } catch (Exception ignored) { }
+        try (android.content.res.AssetFileDescriptor descriptor = getContentResolver().openAssetFileDescriptor(photo.uri, "r")) {
+            if (descriptor != null) bytes = descriptor.getLength();
+        } catch (Exception ignored) { }
+        StringBuilder details = new StringBuilder();
+        if (dimensions != null) details.append(dimensions);
+        if (bytes > 0) {
+            if (details.length() > 0) details.append(" · ");
+            details.append(readableSize(bytes));
+        }
+        return details.length() == 0 ? "Details unavailable" : details.toString();
+    }
+
+    private static String readableSize(long bytes) {
+        if (bytes >= 1024L * 1024L) return String.format(Locale.ROOT, "%.1f MB", bytes / (1024f * 1024f));
+        if (bytes >= 1024L) return String.format(Locale.ROOT, "%.0f KB", bytes / 1024f);
+        return bytes + " B";
+    }
+
+    private static String imageFormat(Photo photo) {
+        return photo.name.contains(".")
+                ? photo.name.substring(photo.name.lastIndexOf('.') + 1).toUpperCase(Locale.ROOT)
+                : "IMAGE";
+    }
+
+    private static String imageDate(Photo photo) {
+        return photo.modified > 0
+                ? android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", photo.modified).toString()
+                : "Unknown date";
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
@@ -1329,6 +1634,10 @@ public final class MainActivity extends Activity {
 
     /** Single screen transition: reset shared input state, then switch. */
     private void enterScreen(Screen screen) {
+        stopViewerPan();
+        stopViewerZoomAnimation();
+        viewerPanX = 0f;
+        viewerPanY = 0f;
         interaction.reset();
         current = screen;
     }
@@ -1825,10 +2134,19 @@ public final class MainActivity extends Activity {
         if (fullImage == null) { openPhoto(); return; }
         root.setBackgroundColor(theme.viewerBackground);
         fullImage.setBackgroundColor(theme.viewerBackground);
+        if (viewerInfo != null) {
+            boolean wasVisible = viewerInfoVisible;
+            View stale = viewerInfo;
+            viewerInfo = null;
+            viewerInfoVisible = false;
+            viewerInfoGeneration++;
+            root.removeView(stale);
+            if (wasVisible) setViewerInfoVisible(true);
+        }
         viewerController.refreshHints();
     }
 
-    @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (debugOverlay != null) debugOverlay.hide(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopShareServer(); super.onDestroy(); loader.shutdownNow(); prefetchLoader.shutdownNow(); }
+    @Override protected void onDestroy() { if (interaction != null) interaction.reset(); if (debugOverlay != null) debugOverlay.hide(); if (directoryCountPoll != null) handler.removeCallbacks(directoryCountPoll); stopViewerPan(); stopViewerZoomAnimation(); stopShareServer(); super.onDestroy(); loader.shutdownNow(); prefetchLoader.shutdownNow(); }
 
     // ---------------------------------------------------------------- debug monitor
 
