@@ -15,11 +15,12 @@ The Gallery is a local image gallery for Android handheld gaming devices. The pr
 ## Current product behavior
 
 - Choose folders with Android's system document-tree picker (SAF). Persist URI access and the configured source list in app preferences. Settings can add/remove image sources; the gallery scans the direct children of each source, not nested directories, and filters to image MIME types.
+- Settings is split into Sources and Appearance sub-pages; LB/RB switch pages and the tab row carries the matching prompt. Appearance holds the Theme option (Follow system by default, Light, Dark). The choice is persisted, and a forced mode resolves the night resources through a configuration-adjusted context, so a change only rebuilds the visible screen.
 - The gallery uses a virtualized `GridView`. Thumbnail decoding runs asynchronously with limited concurrent work and a bounded in-memory LRU cache; full-screen images are decoded asynchronously. Preserve responsiveness for large folders.
 - D-pad moves the visible selection; A opens the selected image. In the viewer, left/right changes images and B returns to the gallery. X cycles sorting: newest, oldest, name A–Z, name Z–A. The held A/X controller wheels provide image actions and sorting/display options; preserve in-place wheel updates and release-to-dismiss behavior.
 - The current UI also provides settings and a local-LAN image sharing screen. Sharing serves the selected image over a local HTTP socket and shows a QR code. This is an explicit product capability, not cloud or remote-service integration.
 - A hidden performance monitor toggles on LB+RB+START and closes on START. It overlays app memory, the thumbnail cache tiers, and worker thread state; it shows no on-screen prompt, takes no focus, and passes every other key through to the active screen.
-- Folder/source, sort, and display-mode state are persisted as implemented. When changing folder selection semantics or defaults, update the implementation and this document together; do not assume the first-release decisions below are already implemented.
+- Folder/source, sort, display-mode, and theme state are persisted as implemented. When changing folder selection semantics or defaults, update the implementation and this document together; do not assume the first-release decisions below are already implemented.
 
 ## Android and storage constraints
 
