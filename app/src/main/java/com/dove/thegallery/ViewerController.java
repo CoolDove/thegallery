@@ -2,6 +2,7 @@ package com.dove.thegallery;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.KeyEvent;
 
 /**
@@ -11,12 +12,20 @@ import android.view.KeyEvent;
 final class ViewerController implements ScreenController {
     /** Prompts stay up this long after the last face button is released. */
     private static final long HINT_HIDE_DELAY_MS = 1500;
+    /** A held direction zooms one 25% step per interval. */
+    private static final long ZOOM_HOLD_INTERVAL_MS = 140;
+    /** Upper bound for one hold, so a lost key-up can never keep zooming after release. */
+    private static final long ZOOM_HOLD_MAX_MS = 6000;
 
     private final MainActivity activity;
     private final InteractionSystem interaction;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean hintVisible;
     private Runnable hintHide;
+    /** Direction currently driving continuous zoom, or UNKNOWN when no direction is held. */
+    private int zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+    private Runnable zoomRepeat;
+    private long zoomHoldAt;
 
     ViewerController(MainActivity activity, InteractionSystem interaction) {
         this.activity = activity;
@@ -25,6 +34,7 @@ final class ViewerController implements ScreenController {
 
     @Override public void onEnter() {
         cancelHintHide();
+        endZoomHold();
         hintVisible = false;
         interaction.hidePanel();
     }
@@ -74,6 +84,47 @@ final class ViewerController implements ScreenController {
     private void cancelHintHide() {
         if (hintHide != null) handler.removeCallbacks(hintHide);
         hintHide = null;
+    }
+
+    // ---------------------------------------------------------------- zoom hold
+
+    /** Starts (or redirects) continuous zoom for a held direction. */
+    private void beginZoomHold(int key) {
+        if (zoomHeldKey == key) return;
+        zoomHeldKey = key;
+        zoomHoldAt = SystemClock.uptimeMillis();
+        zoomStep();
+        scheduleZoomStep(ZOOM_HOLD_INTERVAL_MS);
+    }
+
+    private void endZoomHold() {
+        zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+        if (zoomRepeat != null) handler.removeCallbacks(zoomRepeat);
+        zoomRepeat = null;
+    }
+
+    private void zoomStep() {
+        if (zoomHeldKey == KeyEvent.KEYCODE_UNKNOWN) return;
+        activity.viewerZoom(zoomHeldKey == KeyEvent.KEYCODE_DPAD_UP
+                ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
+    }
+
+    private void scheduleZoomStep(long delayMs) {
+        if (zoomRepeat != null) handler.removeCallbacks(zoomRepeat);
+        zoomRepeat = () -> {
+            zoomRepeat = null;
+            // The key state is authoritative: once the direction is released (or the viewer
+            // closed) the ticker stops itself, so a lost key-up cannot leave zoom running.
+            if (activity.current != Screen.VIEWER || zoomHeldKey == KeyEvent.KEYCODE_UNKNOWN
+                    || !interaction.isPressed(zoomHeldKey)
+                    || SystemClock.uptimeMillis() - zoomHoldAt > ZOOM_HOLD_MAX_MS) {
+                zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+                return;
+            }
+            zoomStep();
+            scheduleZoomStep(ZOOM_HOLD_INTERVAL_MS);
+        };
+        handler.postDelayed(zoomRepeat, delayMs);
     }
 
     private boolean isFaceButtonPressed() {
@@ -162,11 +213,10 @@ final class ViewerController implements ScreenController {
         }
 
         if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
-            // One press is one step: only the initial DOWN of a press zooms, auto-repeat is ignored.
-            if (down && event.getRepeatCount() == 0) {
-                activity.viewerZoom(key == KeyEvent.KEYCODE_DPAD_UP
-                        ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
-            }
+            // A press zooms once immediately; while the direction stays down the ticker keeps
+            // stepping, so holding zooms continuously regardless of the pad's repeat pattern.
+            if (down) beginZoomHold(key);
+            else if (action == KeyEvent.ACTION_UP) endZoomHold();
             return true;
         }
 
