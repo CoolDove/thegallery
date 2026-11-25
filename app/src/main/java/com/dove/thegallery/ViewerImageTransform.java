@@ -16,7 +16,8 @@ import android.widget.ImageView;
 final class ViewerImageTransform {
     static final int ZOOM_IN = 1;
     static final int ZOOM_OUT = -1;
-    private static final float STEP = 1.25f;
+    /** One step changes the scale by 25 percentage points, so 100% -> 125% -> 150%. */
+    private static final float STEP = 0.25f;
     /** Zooming out stops at half of best fit. */
     private static final float MIN_RATIO = 0.5f;
     /** Zooming in stops at eight times best fit, and never below 100%. */
@@ -148,7 +149,7 @@ final class ViewerImageTransform {
         float scale = fit * ratio;
         float minimum = fit * MIN_RATIO;
         float maximum = Math.max(fit * MAX_RATIO, 1f);
-        float target = direction == ZOOM_IN ? scale * STEP : scale / STEP;
+        float target = direction == ZOOM_IN ? scale + STEP : scale - STEP;
         boolean snapped = false;
         if (direction == ZOOM_IN) {
             if (scale < fit && target > fit) {

@@ -1486,12 +1486,13 @@ public final class MainActivity extends Activity {
             rightX = alternateX;
             rightY = alternateY;
         }
-        if (rightX * rightX + rightY * rightY > leftX * leftX + leftY * leftY) {
-            leftX = rightX;
-            leftY = rightY;
-        }
-        viewerPanX = deadzone(leftX);
-        viewerPanY = deadzone(leftY);
+        boolean rightStick = rightX * rightX + rightY * rightY > leftX * leftX + leftY * leftY;
+        float x = rightStick ? rightX : leftX;
+        float y = rightStick ? rightY : leftY;
+        // The left stick drags the image with it; the right stick moves the view instead.
+        float sign = rightStick ? -1f : 1f;
+        viewerPanX = sign * deadzone(x);
+        viewerPanY = sign * deadzone(y);
     }
 
     private static float deadzone(float value) {
