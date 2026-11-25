@@ -24,6 +24,8 @@ Follow the prompts in the lower-right corner. Presses X/Y/A/B can perform some c
 
 If you feel the holding delay is too long, you don't actually need to wait for the wheel to show up, you can input direction immediately after you start holding.
 
+In the full-screen viewer, press **Up** to zoom in and **Down** to zoom out 25 percentage points per step around the point at the centre of the view; hold the direction to keep zooming (it pauses longer on best fit and 100%). Zooming ranges from half to three times the best-fit size and shows the current scale. Use either stick to move the image once it is larger than best fit, press **B** to restore best fit, and press **A** to show or hide a details bar along the top edge. The viewer keeps its prompts hidden until you press a face button.
+
 Some actions are a little hidden: hold **Up** then press **X** to jump to the top, or hold **Down** then press **B** to jump to the bottom. This feels intuitive on a Nintendo Switch layout. I might tweak the scheme for other button layouts in the future.
 
 _The control style is designed to make it feel like a game, I hope it feels good to you._

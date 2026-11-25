@@ -1,36 +1,143 @@
 package com.dove.thegallery;
 
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.KeyEvent;
 
-/** Full-screen viewer input: image stepping, back, and delete-by-hold. */
+/**
+ * Full-screen viewer input: image stepping, zoom/pan, the info overlay, back, and
+ * delete-by-hold. Prompts are hidden until a face button is pressed.
+ */
 final class ViewerController implements ScreenController {
+    /** Prompts stay up this long after the last face button is released. */
+    private static final long HINT_HIDE_DELAY_MS = 1500;
+    /** A held direction zooms one 25% step per interval, and dwells twice as long on a stop. */
+    private static final long ZOOM_HOLD_INTERVAL_MS = 140;
+    private static final long ZOOM_HOLD_STOP_INTERVAL_MS = ZOOM_HOLD_INTERVAL_MS * 2;
+    /** Upper bound for one hold, so a lost key-up can never keep zooming after release. */
+    private static final long ZOOM_HOLD_MAX_MS = 6000;
+
     private final MainActivity activity;
     private final InteractionSystem interaction;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private boolean hintVisible;
+    private Runnable hintHide;
+    /** Direction currently driving continuous zoom, or UNKNOWN when no direction is held. */
+    private int zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+    private Runnable zoomRepeat;
+    private long zoomHoldAt;
+    /** Delay before the next held step; doubles when the last step landed on a stop. */
+    private long zoomNextDelay = ZOOM_HOLD_INTERVAL_MS;
 
     ViewerController(MainActivity activity, InteractionSystem interaction) {
         this.activity = activity;
         this.interaction = interaction;
     }
 
-    @Override public void onEnter() { refreshHints(); }
+    @Override public void onEnter() {
+        cancelHintHide();
+        endZoomHold();
+        hintVisible = false;
+        interaction.hidePanel();
+    }
 
     @Override public void refreshHints() {
         if (activity.current != Screen.VIEWER) return;
-        int held = interaction.heldKey();
-        if (held == KeyEvent.KEYCODE_BUTTON_B || held == KeyEvent.KEYCODE_BACK) {
-            interaction.show(HintPanel.face()
-                    .b("Exit", MainActivity.EXIT_HOLD_DURATION_MS, null));
-        } else if (held == KeyEvent.KEYCODE_BUTTON_X) {
-            interaction.show(HintPanel.face()
-                    .x("Delete", MainActivity.LONG_PRESS_MS, null)
-                    .b("Back", 0, null));
-        } else if (held == KeyEvent.KEYCODE_BUTTON_Y) {
-            interaction.show(HintPanel.face()
-                    .y("Share", MainActivity.LONG_PRESS_MS, null)
-                    .b("Back", 0, null));
-        } else {
+        if (!hintVisible) {
             interaction.hidePanel();
+            return;
         }
+        // Only the button actually being held fills its ring.
+        int held = interaction.heldKey();
+        boolean xHeld = held == KeyEvent.KEYCODE_BUTTON_X;
+        boolean yHeld = held == KeyEvent.KEYCODE_BUTTON_Y;
+        boolean bHeld = held == KeyEvent.KEYCODE_BUTTON_B || held == KeyEvent.KEYCODE_BACK;
+        boolean adjusted = activity.viewerIsAdjusted();
+        interaction.show(HintPanel.face()
+                .x("Delete", xHeld ? MainActivity.LONG_PRESS_MS : 0, null)
+                .y("Share", yHeld ? MainActivity.LONG_PRESS_MS : 0, null)
+                .a(activity.viewerInfoVisible() ? "Hide info" : "Info", 0, activity::toggleViewerInfo)
+                .b(adjusted ? "Fit" : "Exit", !adjusted && bHeld ? MainActivity.EXIT_HOLD_DURATION_MS : 0,
+                        adjusted ? activity::resetViewerFit : activity::showGrid));
+        // Panels shown outside a press (e.g. after a dialog closes) still auto-hide.
+        if (!isFaceButtonPressed() && hintHide == null) scheduleHintHide();
+    }
+
+    /** Any face button brings the prompts back for a moment. */
+    private void revealHints() {
+        hintVisible = true;
+        cancelHintHide();
+        refreshHints();
+    }
+
+    /** Called after a face button is released; hides the prompts once none remain held. */
+    private void scheduleHintHide() {
+        cancelHintHide();
+        hintHide = () -> {
+            hintHide = null;
+            if (activity.current != Screen.VIEWER) return;
+            if (isFaceButtonPressed()) return;
+            hintVisible = false;
+            interaction.hidePanel();
+        };
+        handler.postDelayed(hintHide, HINT_HIDE_DELAY_MS);
+    }
+
+    private void cancelHintHide() {
+        if (hintHide != null) handler.removeCallbacks(hintHide);
+        hintHide = null;
+    }
+
+    // ---------------------------------------------------------------- zoom hold
+
+    /** Starts (or redirects) continuous zoom for a held direction. */
+    private void beginZoomHold(int key) {
+        if (zoomHeldKey == key) return;
+        zoomHeldKey = key;
+        zoomHoldAt = SystemClock.uptimeMillis();
+        zoomStep();
+        scheduleZoomStep(zoomNextDelay);
+    }
+
+    private void endZoomHold() {
+        zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+        if (zoomRepeat != null) handler.removeCallbacks(zoomRepeat);
+        zoomRepeat = null;
+    }
+
+    /** One zoom step; a step that lands on best fit or 100% doubles the wait before the next. */
+    private void zoomStep() {
+        if (zoomHeldKey == KeyEvent.KEYCODE_UNKNOWN) return;
+        boolean onStop = activity.viewerZoom(zoomHeldKey == KeyEvent.KEYCODE_DPAD_UP
+                ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
+        zoomNextDelay = onStop ? ZOOM_HOLD_STOP_INTERVAL_MS : ZOOM_HOLD_INTERVAL_MS;
+    }
+
+    private void scheduleZoomStep(long delayMs) {
+        if (zoomRepeat != null) handler.removeCallbacks(zoomRepeat);
+        zoomRepeat = () -> {
+            zoomRepeat = null;
+            // The key state is authoritative: once the direction is released (or the viewer
+            // closed) the ticker stops itself, so a lost key-up cannot leave zoom running.
+            if (activity.current != Screen.VIEWER || zoomHeldKey == KeyEvent.KEYCODE_UNKNOWN
+                    || !interaction.isPressed(zoomHeldKey)
+                    || SystemClock.uptimeMillis() - zoomHoldAt > ZOOM_HOLD_MAX_MS) {
+                zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
+                return;
+            }
+            zoomStep();
+            scheduleZoomStep(zoomNextDelay);
+        };
+        handler.postDelayed(zoomRepeat, delayMs);
+    }
+
+    private boolean isFaceButtonPressed() {
+        return interaction.isPressed(KeyEvent.KEYCODE_BUTTON_A)
+                || interaction.isPressed(KeyEvent.KEYCODE_BUTTON_X)
+                || interaction.isPressed(KeyEvent.KEYCODE_BUTTON_Y)
+                || interaction.isPressed(KeyEvent.KEYCODE_BUTTON_B)
+                || interaction.isPressed(KeyEvent.KEYCODE_BACK);
     }
 
     @Override public boolean onKey(KeyEvent event) {
@@ -43,17 +150,29 @@ final class ViewerController implements ScreenController {
         }
 
         boolean down = action == KeyEvent.ACTION_DOWN;
+        boolean face = key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_BUTTON_X
+                || key == KeyEvent.KEYCODE_BUTTON_Y || key == KeyEvent.KEYCODE_BUTTON_B
+                || key == KeyEvent.KEYCODE_BACK;
+        if (down && event.getRepeatCount() == 0 && face) revealHints();
+
         if (key == KeyEvent.KEYCODE_BUTTON_B || key == KeyEvent.KEYCODE_BACK) {
+            // Away from best fit, B restores the size and position instead of leaving.
             if (down) {
                 if (event.getRepeatCount() == 0) {
-                    interaction.beginHold(key, MainActivity.HOLD_HINT_DELAY_MS, 0, MainActivity.EXIT_HOLD_DURATION_MS,
-                            this::refreshHints, null, activity::finish);
+                    if (activity.viewerIsAdjusted()) {
+                        activity.resetViewerFit();
+                        refreshHints();
+                    } else {
+                        interaction.beginHold(key, MainActivity.HOLD_HINT_DELAY_MS, 0, MainActivity.EXIT_HOLD_DURATION_MS,
+                                this::refreshHints, null, activity::finish);
+                    }
                 }
             } else if (action == KeyEvent.ACTION_UP) {
                 boolean initiated = interaction.heldKey() == key;
                 InteractionSystem.HoldResult result = interaction.endHold(key);
                 if (initiated && !result.longPressed && !result.hintReached) activity.showGrid();
                 refreshHints();
+                if (!isFaceButtonPressed()) scheduleHintHide();
             }
             return true;
         }
@@ -69,6 +188,7 @@ final class ViewerController implements ScreenController {
             if (action == KeyEvent.ACTION_UP) {
                 interaction.endHold(key);
                 refreshHints();
+                if (!isFaceButtonPressed()) scheduleHintHide();
                 return true;
             }
             return true;
@@ -85,18 +205,32 @@ final class ViewerController implements ScreenController {
             if (action == KeyEvent.ACTION_UP) {
                 interaction.endHold(key);
                 refreshHints();
+                if (!isFaceButtonPressed()) scheduleHintHide();
                 return true;
             }
             return true;
         }
 
-        if (key == KeyEvent.KEYCODE_BUTTON_A) return true;
+        if (key == KeyEvent.KEYCODE_BUTTON_A) {
+            if (down && event.getRepeatCount() == 0) activity.toggleViewerInfo();
+            if (!isFaceButtonPressed()) scheduleHintHide();
+            return true;
+        }
+
+        if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
+            // A press zooms once immediately; while the direction stays down the ticker keeps
+            // stepping, so holding zooms continuously regardless of the pad's repeat pattern.
+            if (down) beginZoomHold(key);
+            else if (action == KeyEvent.ACTION_UP) endZoomHold();
+            return true;
+        }
 
         if (down && !activity.photos.isEmpty()
                 && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             activity.viewerStep = key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1;
             activity.selected = Math.floorMod(activity.selected + (key == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1), activity.photos.size());
             activity.displayPhoto();
+            refreshHints();
             return true;
         }
         return false;
