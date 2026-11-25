@@ -20,8 +20,8 @@ final class ViewerImageTransform {
     private static final float STEP = 0.25f;
     /** Zooming out stops at half of best fit. */
     private static final float MIN_RATIO = 0.5f;
-    /** Zooming in stops at eight times best fit, and never below 100%. */
-    private static final float MAX_RATIO = 8f;
+    /** Zooming in stops at 300% of the image's own pixels. */
+    private static final float MAX_SCALE = 3f;
     private static final float EPSILON = 0.001f;
 
     /** Outcome of one zoom press: whether the ratio moved, and whether it landed on a stop. */
@@ -148,7 +148,7 @@ final class ViewerImageTransform {
         if (!measure(view)) return new ZoomStep(false, false, false, ratio, ratio);
         float scale = fit * ratio;
         float minimum = fit * MIN_RATIO;
-        float maximum = Math.max(fit * MAX_RATIO, 1f);
+        float maximum = Math.max(MAX_SCALE, fit);
         float target = direction == ZOOM_IN ? scale + STEP : scale - STEP;
         boolean snapped = false;
         if (direction == ZOOM_IN) {
@@ -194,7 +194,9 @@ final class ViewerImageTransform {
         return Math.abs(panX - beforeX) > 0.5f || Math.abs(panY - beforeY) > 0.5f;
     }
 
-    private float maxRatio() { return Math.max(MAX_RATIO, 1f / fit); }
+    private float maxScale() { return Math.max(MAX_SCALE, fit); }
+
+    private float maxRatio() { return maxScale() / fit; }
 
     /** Reads the bitmap and view sizes straight from the view; false when unavailable. */
     private boolean measure(ImageView view) {
