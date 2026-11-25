@@ -1365,14 +1365,16 @@ public final class MainActivity extends Activity {
 
     /** One D-pad zoom press; a step that crosses 100% or best fit snaps onto that size. */
     void viewerZoom(int direction) {
-        if (current != Screen.VIEWER || fullImage == null) return;
+        if (current != Screen.VIEWER) return;
         // A new press owns the scale; an unfinished snap animation cannot overwrite it.
         stopViewerZoomAnimation();
-        ViewerImageTransform.ZoomStep step = viewerTransform.zoom(fullImage, direction);
-        viewerZoomNote = !step.changed && viewerTransform.atLimit(direction)
-                ? (direction == ViewerImageTransform.ZOOM_IN ? " · Max" : " · Min")
-                : null;
-        if (step.changed && step.snapped) animateViewerRatio(step.from, step.to);
+        if (fullImage != null) {
+            ViewerImageTransform.ZoomStep step = viewerTransform.zoom(fullImage, direction);
+            viewerZoomNote = !step.changed && viewerTransform.atLimit(direction)
+                    ? (direction == ViewerImageTransform.ZOOM_IN ? " · Max" : " · Min")
+                    : null;
+            if (step.changed && step.snapped) animateViewerRatio(step.from, step.to);
+        }
         showViewerZoomPopup();
         viewerController.refreshHints();
     }
@@ -1454,13 +1456,17 @@ public final class MainActivity extends Activity {
         viewerZoomAnimation = null;
     }
 
-    /** Either analog stick pans an image that is larger than best fit. */
+    /** A deflected analog stick pans an image that is larger than best fit. */
     @Override public boolean onGenericMotionEvent(MotionEvent event) {
-        if (current == Screen.VIEWER && viewerTransform.isZoomed()
+        if (current == Screen.VIEWER
                 && (event.getSource() & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK) {
             readViewerStick(event);
-            if (viewerPanX == 0f && viewerPanY == 0f) stopViewerPan();
-            else startViewerPan();
+            if (viewerPanX == 0f && viewerPanY == 0f) {
+                // Centred stick: nothing to pan, and nothing to consume either.
+                stopViewerPan();
+                return super.onGenericMotionEvent(event);
+            }
+            startViewerPan();
             return true;
         }
         return super.onGenericMotionEvent(event);
