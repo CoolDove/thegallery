@@ -598,19 +598,9 @@ public final class MainActivity extends Activity {
         header.addView(brand());
         page.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout tabs = new LinearLayout(this);
-        tabs.setOrientation(LinearLayout.HORIZONTAL);
-        tabs.setGravity(Gravity.CENTER_VERTICAL);
-        tabs.addView(settingsTab("Sources", SETTINGS_PAGE_SOURCES));
-        LinearLayout.LayoutParams secondTabParams = new LinearLayout.LayoutParams(-2, -2);
-        secondTabParams.leftMargin = dp(8);
-        tabs.addView(settingsTab("Appearance", SETTINGS_PAGE_APPEARANCE), secondTabParams);
-        View tabsSpacer = new View(this);
-        tabs.addView(tabsSpacer, new LinearLayout.LayoutParams(0, 1, 1));
-        tabs.addView(pageSwitchHint());
-        LinearLayout.LayoutParams tabsParams = new LinearLayout.LayoutParams(-1, -2);
-        tabsParams.topMargin = dp(10);
-        page.addView(tabs, tabsParams);
+        LinearLayout.LayoutParams stripParams = new LinearLayout.LayoutParams(-1, -2);
+        stripParams.topMargin = dp(12);
+        page.addView(pageStrip(), stripParams);
 
         if (settingsPage == SETTINGS_PAGE_APPEARANCE) buildAppearancePage(page);
         else buildSourcesPage(page);
@@ -624,66 +614,46 @@ public final class MainActivity extends Activity {
         settingsController.onEnter();
     }
 
-    /** Sub-page tab: the active one keeps the gradient selection outline of a focused card. */
-    private TextView settingsTab(String text, int page) {
-        boolean active = settingsPage == page;
-        TextView tab = label(text, 14);
-        tab.setGravity(Gravity.CENTER);
-        tab.setPadding(dp(18), dp(8), dp(18), dp(8));
-        tab.setTextColor(active ? theme.textPrimary : theme.textMuted);
-        tab.setBackground(active ? theme.selection(1000f, theme.surface, 2f) : theme.pill(theme.surfaceAlt));
-        tab.setOnClickListener(v -> {
-            if (settingsPage == page) return;
-            settingsPage = page;
-            settingsFocus = 0;
-            buildSettings();
-        });
-        return tab;
+    /**
+     * Page indicator: only the current page name sits in the middle, with the LB/RB prompts at the
+     * two edges showing how to reach the other page.
+     */
+    private View pageStrip() {
+        FrameLayout strip = new FrameLayout(this);
+        strip.setBackground(theme.pill(theme.surfaceAlt));
+        strip.setPadding(dp(8), dp(4), dp(8), dp(4));
+        String pageName = settingsPage == SETTINGS_PAGE_APPEARANCE ? "Appearance" : "Sources";
+        TextView name = label(pageName, 15);
+        name.setTextColor(theme.textPrimary);
+        name.setLetterSpacing(0.02f);
+        name.setPadding(0, 0, 0, 0);
+        strip.addView(name, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        strip.addView(pageTurnButton("switch_l", -1),
+                new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.LEFT));
+        strip.addView(pageTurnButton("switch_r", 1),
+                new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
+        return strip;
     }
 
-    /** Non-focusable LB/RB reminder next to the tabs; the prompts stay visible on both pages. */
-    private View pageSwitchHint() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(6), dp(14), dp(6));
-        row.setBackground(theme.pill(theme.surfaceAlt));
-        ImageView left = icon("switch_l");
-        row.addView(left, new LinearLayout.LayoutParams(dp(20), dp(20)));
-        ImageView right = icon("switch_r");
-        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(dp(20), dp(20));
-        rightParams.leftMargin = dp(1);
-        row.addView(right, rightParams);
-        TextView caption = label("Switch page", 12);
-        caption.setTextColor(theme.textMuted);
-        caption.setPadding(0, 0, 0, 0);
-        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(-2, -2);
-        captionParams.leftMargin = dp(8);
-        row.addView(caption, captionParams);
-        return row;
-    }
-
-    private TextView sectionLabel(String text) {
-        TextView category = label(text, 11);
-        category.setGravity(Gravity.LEFT);
-        category.setTextColor(theme.textMuted);
-        category.setLetterSpacing(0.16f);
-        category.setPadding(0, dp(16), 0, dp(4));
-        return category;
+    /** Shoulder prompt that also works by touch: the glyph stays small, the touch target does not. */
+    private View pageTurnButton(String iconName, int delta) {
+        FrameLayout button = new FrameLayout(this);
+        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+        button.addView(icon(iconName), new FrameLayout.LayoutParams(dp(30), dp(16)));
+        button.setOnClickListener(v -> switchSettingsPage(delta));
+        return button;
     }
 
     private TextView pageSubtitle(String text) {
         TextView subtitle = label(text, 14);
         subtitle.setGravity(Gravity.LEFT);
         subtitle.setTextColor(theme.textSecondary);
-        subtitle.setPadding(0, dp(2), 0, 0);
+        subtitle.setPadding(0, dp(8), 0, 0);
         return subtitle;
     }
 
     private void buildSourcesPage(LinearLayout page) {
         page.addView(pageSubtitle("Choose the folders The Gallery reads images from."), new LinearLayout.LayoutParams(-1, -2));
-
-        page.addView(sectionLabel("SOURCES"), new LinearLayout.LayoutParams(-1, -2));
 
         for (int i = 0; i < sources.size(); i++) {
             final Uri source = sources.get(i);
@@ -768,8 +738,6 @@ public final class MainActivity extends Activity {
 
     private void buildAppearancePage(LinearLayout page) {
         page.addView(pageSubtitle("Choose how The Gallery looks."), new LinearLayout.LayoutParams(-1, -2));
-
-        page.addView(sectionLabel("APPEARANCE"), new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.HORIZONTAL);
