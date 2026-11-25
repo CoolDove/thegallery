@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.LinearGradient;
+import android.graphics.Path;
 import android.graphics.Shader;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Typeface;
@@ -587,19 +588,19 @@ public final class MainActivity extends Activity {
         root.setBackground(theme.backdrop());
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(48), dp(20), dp(48), dp(96));
+        page.setPadding(dp(48), dp(12), dp(48), dp(96));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = heading("Settings", 30);
+        TextView title = heading("Settings", 21);
         title.setPadding(0, 0, 0, 0);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         header.addView(brand());
         page.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout.LayoutParams stripParams = new LinearLayout.LayoutParams(-1, -2);
-        stripParams.topMargin = dp(12);
+        stripParams.topMargin = dp(8);
         page.addView(pageStrip(), stripParams);
 
         if (settingsPage == SETTINGS_PAGE_APPEARANCE) buildAppearancePage(page);
@@ -615,33 +616,60 @@ public final class MainActivity extends Activity {
     }
 
     /**
-     * Page indicator: only the current page name sits in the middle, with the LB/RB prompts at the
-     * two edges showing how to reach the other page.
+     * Page indicator: only the current page name sits in the middle. Each edge carries a direction
+     * arrow with the shoulder glyph beneath it, so the page control reads as one strip.
      */
     private View pageStrip() {
         FrameLayout strip = new FrameLayout(this);
         strip.setBackground(theme.pill(theme.surfaceAlt));
-        strip.setPadding(dp(8), dp(4), dp(8), dp(4));
         String pageName = settingsPage == SETTINGS_PAGE_APPEARANCE ? "Appearance" : "Sources";
         TextView name = label(pageName, 15);
         name.setTextColor(theme.textPrimary);
         name.setLetterSpacing(0.02f);
         name.setPadding(0, 0, 0, 0);
         strip.addView(name, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
-        strip.addView(pageTurnButton("switch_l", -1),
+        strip.addView(pageTurnButton(-1),
                 new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.LEFT));
-        strip.addView(pageTurnButton("switch_r", 1),
+        strip.addView(pageTurnButton(1),
                 new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
         return strip;
     }
 
-    /** Shoulder prompt that also works by touch: the glyph stays small, the touch target does not. */
-    private View pageTurnButton(String iconName, int delta) {
-        FrameLayout button = new FrameLayout(this);
-        button.setPadding(dp(10), dp(10), dp(10), dp(10));
-        button.addView(icon(iconName), new FrameLayout.LayoutParams(dp(30), dp(16)));
-        button.setOnClickListener(v -> switchSettingsPage(delta));
-        return button;
+    /** Direction arrow above its shoulder glyph; tapping anywhere on it turns the page. */
+    private View pageTurnButton(int delta) {
+        boolean forward = delta > 0;
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.CENTER_HORIZONTAL);
+        column.setPadding(dp(16), dp(6), dp(16), dp(6));
+
+        ImageView arrow = new ImageView(this);
+        arrow.setImageDrawable(triangle(forward));
+        column.addView(arrow, new LinearLayout.LayoutParams(dp(12), dp(10)));
+
+        ImageView shoulder = icon(forward ? "switch_r" : "switch_l");
+        LinearLayout.LayoutParams shoulderParams = new LinearLayout.LayoutParams(dp(28), dp(15));
+        shoulderParams.topMargin = dp(2);
+        column.addView(shoulder, shoulderParams);
+
+        column.setOnClickListener(v -> switchSettingsPage(delta));
+        return column;
+    }
+
+    /** Solid triangle pointing the way the shoulder button turns; it matches neither font nor density. */
+    private android.graphics.drawable.Drawable triangle(boolean forward) {
+        Path path = new Path();
+        if (forward) {
+            path.moveTo(0f, 0f); path.lineTo(1f, 0.5f); path.lineTo(0f, 1f);
+        } else {
+            path.moveTo(1f, 0f); path.lineTo(0f, 0.5f); path.lineTo(1f, 1f);
+        }
+        path.close();
+        android.graphics.drawable.ShapeDrawable shape =
+                new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.PathShape(path, 1f, 1f));
+        shape.getPaint().setColor(theme.textSecondary);
+        shape.getPaint().setAntiAlias(true);
+        return shape;
     }
 
     private TextView pageSubtitle(String text) {
