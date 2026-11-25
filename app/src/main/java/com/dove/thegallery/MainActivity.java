@@ -144,6 +144,7 @@ public final class MainActivity extends Activity {
     private long viewerInfoGeneration;
     private TextView viewerZoomPopup;
     private boolean viewerZoomPopupShown;
+    private String viewerZoomNote;
     private Runnable viewerZoomPopupHide;
     private Runnable viewerZoomAnimation;
     private Runnable viewerPanTick;
@@ -1237,7 +1238,6 @@ public final class MainActivity extends Activity {
         fullImage.setFocusable(true);
         fullImage.setFocusableInTouchMode(true);
         fullImage.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-            viewerTransform.setViewport(right - left, bottom - top);
             applyViewerMatrix();
         });
         root.addView(fullImage, new FrameLayout.LayoutParams(-1, -1));
@@ -1327,7 +1327,6 @@ public final class MainActivity extends Activity {
     private void transitionViewerBitmap(Bitmap bitmap) {
         if (fullImage == null || root == null) return;
         fullImage.setImageBitmap(bitmap);
-        viewerTransform.setImage(bitmap.getWidth(), bitmap.getHeight());
         applyViewerMatrix();
     }
 
@@ -1341,7 +1340,7 @@ public final class MainActivity extends Activity {
 
     private void applyViewerMatrix() {
         if (fullImage == null) return;
-        fullImage.setImageMatrix(viewerTransform.matrix());
+        viewerTransform.apply(fullImage);
         if (viewerInfoZoom != null) viewerInfoZoom.setText(viewerZoomLabel());
         if (viewerZoomPopup != null && viewerZoomPopupShown) viewerZoomPopup.setText(viewerZoomPopupLabel());
     }
@@ -1354,67 +1353,41 @@ public final class MainActivity extends Activity {
 
     String viewerZoomLabel() {
         int percent = viewerTransform.percent();
-        if (viewerTransform.isFit()) return "Best fit (" + percent + "%)";
+        if (!viewerTransform.isAdjusted()) return "Best fit (" + percent + "%)";
         return "Zoom " + percent + "%";
     }
 
     private String viewerZoomPopupLabel() {
         int percent = viewerTransform.percent();
-        return viewerTransform.isFit() ? "Best fit · " + percent + "%" : percent + "%";
+        String label = viewerTransform.isAdjusted() ? percent + "%" : "Best fit · " + percent + "%";
+        return viewerZoomNote == null ? label : label + viewerZoomNote;
     }
 
     /** One D-pad zoom press; a step that crosses 100% or best fit snaps onto that size. */
     void viewerZoom(int direction) {
         if (current != Screen.VIEWER || fullImage == null) return;
-        syncViewerBounds();
-        if (!viewerTransform.hasImage()) return;
         // A new press owns the scale; an unfinished snap animation cannot overwrite it.
         stopViewerZoomAnimation();
-        float before = viewerTransform.scale();
-        ViewerImageTransform.ZoomStep step = viewerTransform.zoomStep(direction);
-        if (step.changed) {
-            if (step.snapped) animateViewerScale(step.from, step.to);
-            else {
-                viewerTransform.setScale(step.to);
-                applyViewerMatrix();
-            }
-        } else {
-            // Force the step anyway unless the scale is genuinely at a limit.
-            viewerTransform.setScale(direction == ViewerImageTransform.ZOOM_IN ? before * 1.25f : before / 1.25f);
-            applyViewerMatrix();
-        }
+        ViewerImageTransform.ZoomStep step = viewerTransform.zoom(fullImage, direction);
+        viewerZoomNote = !step.changed && viewerTransform.atLimit(direction)
+                ? (direction == ViewerImageTransform.ZOOM_IN ? " · Max" : " · Min")
+                : null;
+        if (step.changed && step.snapped) animateViewerRatio(step.from, step.to);
         showViewerZoomPopup();
         viewerController.refreshHints();
     }
 
-    /** Re-reads the viewport and bitmap size so a stale transform can never block zooming. */
-    private void syncViewerBounds() {
-        int width = fullImage.getWidth(), height = fullImage.getHeight();
-        if (width <= 0 || height <= 0) {
-            android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-            width = metrics.widthPixels;
-            height = metrics.heightPixels;
-        }
-        viewerTransform.setViewport(width, height);
-        if (viewerTransform.hasImage()) return;
-        android.graphics.drawable.Drawable drawable = fullImage.getDrawable();
-        if (drawable instanceof android.graphics.drawable.BitmapDrawable) {
-            Bitmap bitmap = ((android.graphics.drawable.BitmapDrawable) drawable).getBitmap();
-            if (bitmap != null) viewerTransform.setImage(bitmap.getWidth(), bitmap.getHeight());
-        }
-    }
-
     /** B on an image that is not at best fit: back to best fit, recentred. */
     void resetViewerFit() {
-        if (current != Screen.VIEWER || !viewerTransform.isAdjusted()) return;
-        animateViewerScale(viewerTransform.scale(), viewerTransform.fitScale());
+        if (current != Screen.VIEWER || fullImage == null || !viewerTransform.isAdjusted()) return;
+        animateViewerRatio(viewerTransform.ratio(), 1f);
         showViewerZoomPopup();
         viewerController.refreshHints();
     }
 
     /** Small readout of the current scale that fades away after the last zoom press. */
     private void showViewerZoomPopup() {
-        if (current != Screen.VIEWER || !viewerTransform.hasImage()) return;
+        if (current != Screen.VIEWER) return;
         if (viewerZoomPopup == null) {
             TextView pill = label("", 14);
             pill.setPadding(dp(16), dp(8), dp(16), dp(8));
@@ -1456,7 +1429,7 @@ public final class MainActivity extends Activity {
         viewerZoomPopup = null;
     }
 
-    private void animateViewerScale(float from, float to) {
+    private void animateViewerRatio(float from, float to) {
         if (viewerZoomAnimation != null) handler.removeCallbacks(viewerZoomAnimation);
         final long start = android.os.SystemClock.uptimeMillis();
         viewerZoomAnimation = new Runnable() {
@@ -1464,7 +1437,7 @@ public final class MainActivity extends Activity {
                 if (current != Screen.VIEWER || fullImage == null) { viewerZoomAnimation = null; return; }
                 float t = Math.min(1f, (android.os.SystemClock.uptimeMillis() - start) / (float) VIEWER_ZOOM_SNAP_MS);
                 float eased = t * t * (3f - 2f * t);
-                viewerTransform.setScale(from + (to - from) * eased);
+                viewerTransform.setRatio(fullImage, from + (to - from) * eased);
                 applyViewerMatrix();
                 if (t < 1f) handler.postDelayed(this, 16);
                 else {
@@ -1530,7 +1503,7 @@ public final class MainActivity extends Activity {
                 float seconds = Math.min(0.05f, (now - viewerPanAt) / 1000f);
                 viewerPanAt = now;
                 float speed = Math.max(1, fullImage == null ? 1 : fullImage.getWidth()) * VIEWER_PAN_WIDTHS_PER_SECOND;
-                if (viewerTransform.panBy(viewerPanX * speed * seconds, viewerPanY * speed * seconds)) applyViewerMatrix();
+                if (viewerTransform.panBy(fullImage, viewerPanX * speed * seconds, viewerPanY * speed * seconds)) applyViewerMatrix();
                 if (viewerPanX == 0f && viewerPanY == 0f) return;
                 viewerPanTick = this;
                 handler.postDelayed(this, 16);

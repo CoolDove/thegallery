@@ -37,7 +37,7 @@ The Gallery is a local image gallery for Android handheld gaming devices. The pr
 - Hold-operated wheels open on the initiating face-button hold and close on its release. Toggle actions update underlying state and refresh the wheel label/grid in place—do not recreate the wheel or scrim. Keep short-press actions separate from hold actions.
 - Before changing screens or showing modal overlays, cancel in-progress holds and swallow their eventual key-up through `resetButtonHoldForUiChange()` / the shared interaction system.
 - Viewer prompts are hidden while nothing is held: any face button reveals them, and they disappear 1.5 s after the last face button is released. Only the held face button's ring fills.
-- Viewer zoom is an absolute source-to-screen scale: every photo opens at best fit, best fit and 100% are snap stops, zooming out stops at half of best fit, and the image stays centered while it is not larger than best fit.
+- Viewer zoom is stored as a ratio relative to best fit (1 = the whole image fitted to the viewport); best fit and 100% are snap stops, zooming out stops at half of best fit, and the pixel scale is derived from the view and its bitmap on every apply so no cached measurement can block zooming.
 - Keep selected-item feedback clearly visible for controller users and preserve selection when returning between gallery and viewer.
 
 ## Known gaps / decisions to revisit

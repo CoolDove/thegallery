@@ -2,7 +2,6 @@ package com.dove.thegallery;
 
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.view.KeyEvent;
 
 /**
@@ -12,16 +11,12 @@ import android.view.KeyEvent;
 final class ViewerController implements ScreenController {
     /** Prompts stay up this long after the last face button is released. */
     private static final long HINT_HIDE_DELAY_MS = 1500;
-    /** A lost D-pad key-up is assumed after this long, so the next press still zooms. */
-    private static final long ZOOM_STALE_PRESS_MS = 1000;
 
     private final MainActivity activity;
     private final InteractionSystem interaction;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean hintVisible;
     private Runnable hintHide;
-    private int zoomDownKey = KeyEvent.KEYCODE_UNKNOWN;
-    private long zoomStepAt;
 
     ViewerController(MainActivity activity, InteractionSystem interaction) {
         this.activity = activity;
@@ -167,21 +162,10 @@ final class ViewerController implements ScreenController {
         }
 
         if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
-            // One physical press is exactly one step: repeat and burst DOWN events from a held
-            // direction are ignored until that direction is released (or a stuck key-up is
-            // assumed lost after a second).
-            if (down) {
-                long now = SystemClock.uptimeMillis();
-                boolean repeat = event.getRepeatCount() > 0;
-                boolean samePress = zoomDownKey == key && (repeat || now - zoomStepAt < ZOOM_STALE_PRESS_MS);
-                if (!samePress) {
-                    zoomDownKey = key;
-                    zoomStepAt = now;
-                    activity.viewerZoom(key == KeyEvent.KEYCODE_DPAD_UP
-                            ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
-                }
-            } else if (action == KeyEvent.ACTION_UP) {
-                if (zoomDownKey == key) zoomDownKey = KeyEvent.KEYCODE_UNKNOWN;
+            // One press is one step: only the initial DOWN of a press zooms, auto-repeat is ignored.
+            if (down && event.getRepeatCount() == 0) {
+                activity.viewerZoom(key == KeyEvent.KEYCODE_DPAD_UP
+                        ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
             }
             return true;
         }
