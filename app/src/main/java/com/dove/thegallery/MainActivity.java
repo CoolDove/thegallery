@@ -136,10 +136,9 @@ public final class MainActivity extends Activity {
     private ImageView fullImage;
     /** Viewer zoom/pan state; reset whenever the shown photo changes. */
     private final ViewerImageTransform viewerTransform = new ViewerImageTransform();
-    private FrameLayout viewerInfo;
+    private View viewerInfo;
     private TextView viewerInfoName;
     private TextView viewerInfoMeta;
-    private TextView viewerInfoSub;
     private TextView viewerInfoZoom;
     private boolean viewerInfoVisible;
     private long viewerInfoGeneration;
@@ -1369,6 +1368,9 @@ public final class MainActivity extends Activity {
         if (current != Screen.VIEWER || fullImage == null) return;
         syncViewerBounds();
         if (!viewerTransform.hasImage()) return;
+        // A new press owns the scale; an unfinished snap animation cannot overwrite it.
+        stopViewerZoomAnimation();
+        float before = viewerTransform.scale();
         ViewerImageTransform.ZoomStep step = viewerTransform.zoomStep(direction);
         if (step.changed) {
             if (step.snapped) animateViewerScale(step.from, step.to);
@@ -1376,6 +1378,10 @@ public final class MainActivity extends Activity {
                 viewerTransform.setScale(step.to);
                 applyViewerMatrix();
             }
+        } else {
+            // Force the step anyway unless the scale is genuinely at a limit.
+            viewerTransform.setScale(direction == ViewerImageTransform.ZOOM_IN ? before * 1.25f : before / 1.25f);
+            applyViewerMatrix();
         }
         showViewerZoomPopup();
         viewerController.refreshHints();
@@ -1383,7 +1389,13 @@ public final class MainActivity extends Activity {
 
     /** Re-reads the viewport and bitmap size so a stale transform can never block zooming. */
     private void syncViewerBounds() {
-        viewerTransform.setViewport(fullImage.getWidth(), fullImage.getHeight());
+        int width = fullImage.getWidth(), height = fullImage.getHeight();
+        if (width <= 0 || height <= 0) {
+            android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+            width = metrics.widthPixels;
+            height = metrics.heightPixels;
+        }
+        viewerTransform.setViewport(width, height);
         if (viewerTransform.hasImage()) return;
         android.graphics.drawable.Drawable drawable = fullImage.getDrawable();
         if (drawable instanceof android.graphics.drawable.BitmapDrawable) {
@@ -1408,8 +1420,8 @@ public final class MainActivity extends Activity {
             pill.setPadding(dp(16), dp(8), dp(16), dp(8));
             pill.setBackground(theme.bordered(theme.surfaceGlass, 1000f, 1f, theme.outline));
             pill.setElevation(dp(6));
-            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-            params.topMargin = dp(26);
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+            params.bottomMargin = dp(34);
             root.addView(pill, params);
             viewerZoomPopup = pill;
         }
@@ -1563,45 +1575,42 @@ public final class MainActivity extends Activity {
     }
 
     private void buildViewerInfo() {
-        FrameLayout overlay = new FrameLayout(this);
-        overlay.setBackgroundColor((theme.viewerBackground & 0x00FFFFFF) | 0xA6000000);
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.VERTICAL);
+        bar.setPadding(dp(26), dp(11), dp(26), dp(11));
+        bar.setBackgroundColor((theme.viewerBackground & 0x00FFFFFF) | 0xE6000000);
+        bar.setElevation(dp(8));
 
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setPadding(dp(20), dp(24), dp(20), dp(24));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setOrientation(LinearLayout.HORIZONTAL);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
 
-        viewerInfoName = label("", 24);
+        viewerInfoName = label("", 16);
         viewerInfoName.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
         viewerInfoName.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
         viewerInfoName.setPadding(0, 0, 0, 0);
         viewerInfoName.setSingleLine(true);
         viewerInfoName.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        viewerInfoName.setMaxWidth(dp(520));
-        column.addView(viewerInfoName, new LinearLayout.LayoutParams(-2, -2));
+        heading.addView(viewerInfoName, new LinearLayout.LayoutParams(0, -2, 1));
 
-        viewerInfoMeta = viewerInfoLine(15, theme.textSecondary);
-        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-2, -2);
-        metaParams.topMargin = dp(10);
-        column.addView(viewerInfoMeta, metaParams);
-
-        viewerInfoSub = viewerInfoLine(13, theme.textMuted);
-        LinearLayout.LayoutParams subParams = new LinearLayout.LayoutParams(-2, -2);
-        subParams.topMargin = dp(4);
-        column.addView(viewerInfoSub, subParams);
-
-        viewerInfoZoom = viewerInfoLine(13, theme.accent);
+        viewerInfoZoom = label("", 13);
+        viewerInfoZoom.setPadding(0, 0, 0, 0);
+        viewerInfoZoom.setTextColor(theme.accent);
+        viewerInfoZoom.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams zoomParams = new LinearLayout.LayoutParams(-2, -2);
-        zoomParams.topMargin = dp(18);
-        column.addView(viewerInfoZoom, zoomParams);
+        zoomParams.leftMargin = dp(16);
+        heading.addView(viewerInfoZoom, zoomParams);
 
-        FrameLayout.LayoutParams columnParams = new FrameLayout.LayoutParams(-2, -2, Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        columnParams.leftMargin = dp(34);
-        columnParams.rightMargin = dp(34);
-        overlay.addView(column, columnParams);
+        bar.addView(heading, new LinearLayout.LayoutParams(-1, -2));
 
-        // Above the image, below the controller prompts.
-        root.addView(overlay, Math.min(1, root.getChildCount()), new FrameLayout.LayoutParams(-1, -1));
-        viewerInfo = overlay;
+        viewerInfoMeta = viewerInfoLine(12, theme.textSecondary);
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(-1, -2);
+        metaParams.topMargin = dp(3);
+        bar.addView(viewerInfoMeta, metaParams);
+
+        FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(-1, -2, Gravity.TOP);
+        root.addView(bar, Math.min(1, root.getChildCount()), barParams);
+        viewerInfo = bar;
     }
 
     private TextView viewerInfoLine(int size, int color) {
@@ -1620,16 +1629,16 @@ public final class MainActivity extends Activity {
         if (viewerInfo == null || photos.isEmpty()) return;
         final Photo photo = photos.get(Math.max(0, Math.min(selected, photos.size() - 1)));
         final long generation = ++viewerInfoGeneration;
+        final String trailing = imageFormat(photo) + " · " + imageDate(photo)
+                + " · " + (selected + 1) + " / " + photos.size();
         viewerInfoName.setText(photo.name);
-        viewerInfoMeta.setText("Reading details…");
-        viewerInfoSub.setText(imageFormat(photo) + " · " + imageDate(photo)
-                + " · " + (selected + 1) + " / " + photos.size());
+        viewerInfoMeta.setText(trailing);
         viewerInfoZoom.setText(viewerZoomLabel());
         loader.execute(() -> {
             String details = loadPhotoDetails(photo);
             runOnUiThread(() -> {
                 if (generation != viewerInfoGeneration || viewerInfoMeta == null) return;
-                viewerInfoMeta.setText(details);
+                viewerInfoMeta.setText(details + " · " + trailing);
             });
         });
     }
