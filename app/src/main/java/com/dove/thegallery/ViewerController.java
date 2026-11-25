@@ -12,8 +12,9 @@ import android.view.KeyEvent;
 final class ViewerController implements ScreenController {
     /** Prompts stay up this long after the last face button is released. */
     private static final long HINT_HIDE_DELAY_MS = 1500;
-    /** A held direction zooms one 25% step per interval. */
+    /** A held direction zooms one 25% step per interval, and dwells twice as long on a stop. */
     private static final long ZOOM_HOLD_INTERVAL_MS = 140;
+    private static final long ZOOM_HOLD_STOP_INTERVAL_MS = ZOOM_HOLD_INTERVAL_MS * 2;
     /** Upper bound for one hold, so a lost key-up can never keep zooming after release. */
     private static final long ZOOM_HOLD_MAX_MS = 6000;
 
@@ -26,6 +27,8 @@ final class ViewerController implements ScreenController {
     private int zoomHeldKey = KeyEvent.KEYCODE_UNKNOWN;
     private Runnable zoomRepeat;
     private long zoomHoldAt;
+    /** Delay before the next held step; doubles when the last step landed on a stop. */
+    private long zoomNextDelay = ZOOM_HOLD_INTERVAL_MS;
 
     ViewerController(MainActivity activity, InteractionSystem interaction) {
         this.activity = activity;
@@ -94,7 +97,7 @@ final class ViewerController implements ScreenController {
         zoomHeldKey = key;
         zoomHoldAt = SystemClock.uptimeMillis();
         zoomStep();
-        scheduleZoomStep(ZOOM_HOLD_INTERVAL_MS);
+        scheduleZoomStep(zoomNextDelay);
     }
 
     private void endZoomHold() {
@@ -103,10 +106,12 @@ final class ViewerController implements ScreenController {
         zoomRepeat = null;
     }
 
+    /** One zoom step; a step that lands on best fit or 100% doubles the wait before the next. */
     private void zoomStep() {
         if (zoomHeldKey == KeyEvent.KEYCODE_UNKNOWN) return;
-        activity.viewerZoom(zoomHeldKey == KeyEvent.KEYCODE_DPAD_UP
+        boolean onStop = activity.viewerZoom(zoomHeldKey == KeyEvent.KEYCODE_DPAD_UP
                 ? ViewerImageTransform.ZOOM_IN : ViewerImageTransform.ZOOM_OUT);
+        zoomNextDelay = onStop ? ZOOM_HOLD_STOP_INTERVAL_MS : ZOOM_HOLD_INTERVAL_MS;
     }
 
     private void scheduleZoomStep(long delayMs) {
@@ -122,7 +127,7 @@ final class ViewerController implements ScreenController {
                 return;
             }
             zoomStep();
-            scheduleZoomStep(ZOOM_HOLD_INTERVAL_MS);
+            scheduleZoomStep(zoomNextDelay);
         };
         handler.postDelayed(zoomRepeat, delayMs);
     }

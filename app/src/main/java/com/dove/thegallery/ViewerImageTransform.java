@@ -27,10 +27,13 @@ final class ViewerImageTransform {
     static final class ZoomStep {
         final boolean changed;
         final boolean snapped;
+        /** True when the new size is exactly best fit or 100%, so a held zoom should dwell. */
+        final boolean stopped;
         final float from, to;
-        ZoomStep(boolean changed, boolean snapped, float from, float to) {
+        ZoomStep(boolean changed, boolean snapped, boolean stopped, float from, float to) {
             this.changed = changed;
             this.snapped = snapped;
+            this.stopped = stopped;
             this.from = from;
             this.to = to;
         }
@@ -74,15 +77,13 @@ final class ViewerImageTransform {
     /** Applies the stored ratio and pan to the view, clamped to its current geometry. */
     void apply(ImageView view) {
         if (!measure(view)) return;
-        float scale = fit * ratio;
-        float scaledWidth = imageWidth * scale;
-        float scaledHeight = imageHeight * scale;
-        float centredX = (viewWidth - scaledWidth) / 2f;
-        float centredY = (viewHeight - scaledHeight) / 2f;
-        float tx = scaledWidth <= viewWidth
-                ? centredX : clamp(centredX + panX, viewWidth - scaledWidth, 0f);
-        float ty = scaledHeight <= viewHeight
-                ? centredY : clamp(centredY + panY, viewHeight - scaledHeight, 0f);
+        applyMatrix(view, fit * ratio);
+    }
+
+    /** Builds and pushes the matrix for a given pixel scale, then stores the clamped pan. */
+    private void applyMatrix(ImageView view, float scale) {
+        float centredX = centredX(scale), centredY = centredY(scale);
+        float tx = translationX(scale), ty = translationY(scale);
         panX = tx - centredX;
         panY = ty - centredY;
         matrix.setScale(scale, scale);
@@ -91,16 +92,51 @@ final class ViewerImageTransform {
         percent = Math.round(scale * 100f);
     }
 
+    private float centredX(float scale) { return (viewWidth - imageWidth * scale) / 2f; }
+
+    private float centredY(float scale) { return (viewHeight - imageHeight * scale) / 2f; }
+
+    /** Never shows empty space beside an oversized image; a smaller one stays centred. */
+    private float translationX(float scale) {
+        float width = imageWidth * scale;
+        if (width <= viewWidth) return centredX(scale);
+        return clamp(centredX(scale) + panX, viewWidth - width, 0f);
+    }
+
+    private float translationY(float scale) {
+        float height = imageHeight * scale;
+        if (height <= viewHeight) return centredY(scale);
+        return clamp(centredY(scale) + panY, viewHeight - height, 0f);
+    }
+
     /** True when the ratio cannot move further in this direction. */
     boolean atLimit(int direction) {
         return direction == ZOOM_IN ? ratio >= maxRatio() - EPSILON : ratio <= MIN_RATIO + EPSILON;
     }
 
-    /** Sets an explicit ratio, clamped to the zoom range. Used by the snap animation. */
+    /** True when the image is showing at exactly 100% of its own pixels. */
+    boolean isPixelPerfect() { return Math.abs(fit * ratio - 1f) <= 0.002f; }
+
+    /**
+     * Sets an explicit ratio while keeping the image point under the viewport centre fixed,
+     * so zooming grows and shrinks around what the user is looking at.
+     */
     void setRatio(ImageView view, float value) {
         if (!measure(view)) return;
-        ratio = clamp(value, MIN_RATIO, maxRatio());
-        apply(view);
+        changeRatio(view, clamp(value, MIN_RATIO, maxRatio()));
+    }
+
+    private void changeRatio(ImageView view, float newRatio) {
+        float scale = fit * ratio;
+        float width = imageWidth * scale, height = imageHeight * scale;
+        float anchorU = width <= 0f ? 0.5f : (viewWidth / 2f - translationX(scale)) / width;
+        float anchorV = height <= 0f ? 0.5f : (viewHeight / 2f - translationY(scale)) / height;
+        ratio = newRatio;
+        float scaled = fit * ratio;
+        float newWidth = imageWidth * scaled, newHeight = imageHeight * scaled;
+        panX = (viewWidth / 2f - anchorU * newWidth) - centredX(scaled);
+        panY = (viewHeight / 2f - anchorV * newHeight) - centredY(scaled);
+        applyMatrix(view, scaled);
     }
 
     /**
@@ -108,7 +144,7 @@ final class ViewerImageTransform {
      * every press produces a visible change until the ratio reaches a limit.
      */
     ZoomStep zoom(ImageView view, int direction) {
-        if (!measure(view)) return new ZoomStep(false, false, ratio, ratio);
+        if (!measure(view)) return new ZoomStep(false, false, false, ratio, ratio);
         float scale = fit * ratio;
         float minimum = fit * MIN_RATIO;
         float maximum = Math.max(fit * MAX_RATIO, 1f);
@@ -141,9 +177,10 @@ final class ViewerImageTransform {
         }
         target = clamp(target, minimum, maximum);
         float from = ratio;
-        ratio = target / fit;
-        apply(view);
-        return new ZoomStep(Math.abs(ratio - from) > EPSILON, snapped, from, ratio);
+        changeRatio(view, target / fit);
+        boolean changed = Math.abs(ratio - from) > EPSILON;
+        boolean stopped = changed && (isPixelPerfect() || !isAdjusted());
+        return new ZoomStep(changed, snapped, stopped, from, ratio);
     }
 
     /** Moves the image by screen pixels; only possible above best fit. */

@@ -1363,20 +1363,26 @@ public final class MainActivity extends Activity {
         return viewerZoomNote == null ? label : label + viewerZoomNote;
     }
 
-    /** One D-pad zoom press; a step that crosses 100% or best fit snaps onto that size. */
-    void viewerZoom(int direction) {
-        if (current != Screen.VIEWER) return;
+    /**
+     * One D-pad zoom press; a step that crosses 100% or best fit snaps onto that size.
+     * Returns true when the new size sits exactly on best fit or 100%.
+     */
+    boolean viewerZoom(int direction) {
+        if (current != Screen.VIEWER) return false;
         // A new press owns the scale; an unfinished snap animation cannot overwrite it.
         stopViewerZoomAnimation();
+        boolean stopped = false;
         if (fullImage != null) {
             ViewerImageTransform.ZoomStep step = viewerTransform.zoom(fullImage, direction);
             viewerZoomNote = !step.changed && viewerTransform.atLimit(direction)
                     ? (direction == ViewerImageTransform.ZOOM_IN ? " · Max" : " · Min")
                     : null;
             if (step.changed && step.snapped) animateViewerRatio(step.from, step.to);
+            stopped = step.stopped;
         }
         showViewerZoomPopup();
         viewerController.refreshHints();
+        return stopped;
     }
 
     /** B on an image that is not at best fit: back to best fit, recentred. */
