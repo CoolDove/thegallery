@@ -42,13 +42,16 @@ The current setup is simple: add image source folders in Settings page, so you c
 
 We can share selected images over the **local network**, so you can use another device to receive and post them. Most people do not install social apps on their handhelds (at least I don't, to not break the gaming vibe).
 
+Settings has two sharing methods:
+
+- **File** sends what you shared: the image itself, or one ZIP when you share several.
+- **Gallery** opens a small web page listing the shared images. View an image full size and copy it on the receiving device, one by one, instead of taking the whole ZIP.
+
 <p align="center">
   <img src="screenshots/share_screen.jpg" width="50%" alt="share">
 </p>
 
 If you use your own router, you can assign the handheld a static IP address. Then the sharing address will always stay the same, so that you can bookmark it.
-
-This works pretty well, but I may add other ways to share, in the future.
 
 ## Recommendation
 

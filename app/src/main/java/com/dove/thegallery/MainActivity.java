@@ -85,6 +85,15 @@ public final class MainActivity extends Activity {
     private static final String PREF_THEME_MODE = "theme_mode";
     /** Settings sub-pages, switched with LB/RB. */
     static final int SETTINGS_PAGE_SOURCES = 0, SETTINGS_PAGE_APPEARANCE = 1;
+    /** Sharing methods: the raw bytes as a file/ZIP, or a small web gallery of the shared images. */
+    static final String[] SHARE_MODES = {"File", "Gallery"};
+    /** One-line explanation under the share-method row, per method. */
+    private static final String[] SHARE_MODE_FOOTERS = {
+            "File sends the shared images as they are; several images arrive as one ZIP.",
+            "Gallery opens a web page listing the shared images, so each one can be viewed and copied on its own.",
+    };
+    static final int SHARE_MODE_FILE = 0, SHARE_MODE_GALLERY = 1;
+    private static final String PREF_SHARE_MODE = "share_mode";
     private static final long OVERLAY_FADE_MS = 140;
     /** Height of the floating gallery top bar; the grid pads its top by this much. */
     private static final int TOP_BAR_DP = 52;
@@ -139,7 +148,11 @@ public final class MainActivity extends Activity {
     final ArrayList<View> settingsActions = new ArrayList<>();
     int settingsFocus;
     int settingsPage = SETTINGS_PAGE_SOURCES;
+    /** Index of the share-method row in settingsActions, or -1 when the page has no such row. */
+    int settingsShareRow = -1;
+    private boolean settingsShareHintShown;
     int themeMode = Theme.FOLLOW_SYSTEM;
+    int shareMode = SHARE_MODE_FILE;
     private int gridColumns = 1;
     private ImageView fullImage;
     /** Viewer zoom/pan state; reset whenever the shown photo changes. */
@@ -191,6 +204,7 @@ public final class MainActivity extends Activity {
         sort = Math.max(0, Math.min(preferences.getInt("sort", 0), SORTS.length - 1));
         displayMode = Math.max(0, Math.min(preferences.getInt("display_mode", 1), DISPLAY_MODES.length - 1));
         themeMode = Theme.clampMode(preferences.getInt(PREF_THEME_MODE, Theme.FOLLOW_SYSTEM));
+        shareMode = Math.max(0, Math.min(preferences.getInt(PREF_SHARE_MODE, SHARE_MODE_FILE), SHARE_MODES.length - 1));
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         theme = Theme.of(this, themeMode);
         applyWindowBackground();
@@ -614,6 +628,7 @@ public final class MainActivity extends Activity {
         enterScreen(Screen.SETTINGS);
         if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settingsActions.clear();
+        settingsShareRow = -1;
         root.removeAllViews();
         root.setBackground(theme.backdrop());
         LinearLayout page = new LinearLayout(this);
@@ -652,7 +667,7 @@ public final class MainActivity extends Activity {
     private View pageStrip() {
         FrameLayout strip = new FrameLayout(this);
         strip.setBackground(theme.pill(theme.surfaceAlt));
-        String pageName = settingsPage == SETTINGS_PAGE_APPEARANCE ? "Appearance" : "Sources";
+        String pageName = settingsPage == SETTINGS_PAGE_APPEARANCE ? "Appearance" : "General";
         TextView name = label(pageName, 15);
         name.setTextColor(theme.textPrimary);
         name.setLetterSpacing(0.02f);
@@ -723,7 +738,7 @@ public final class MainActivity extends Activity {
     }
 
     private void buildSourcesPage(LinearLayout page) {
-        page.addView(pageSubtitle("Choose the folders The Gallery reads images from."), new LinearLayout.LayoutParams(-1, -2));
+        page.addView(pageSubtitle("Choose the folders The Gallery reads images from, and how images are shared."), new LinearLayout.LayoutParams(-1, -2));
 
         for (int i = 0; i < sources.size(); i++) {
             final Uri source = sources.get(i);
@@ -804,6 +819,53 @@ public final class MainActivity extends Activity {
         footer.setTextColor(theme.textMuted);
         footer.setPadding(0, dp(14), 0, 0);
         page.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+
+        buildShareMethodRow(page);
+    }
+
+    /** Share-method row: the value the Share screen uses. Left/Right or A cycles it. */
+    private void buildShareMethodRow(LinearLayout page) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(18), dp(13), dp(14), dp(13));
+        card.setBackground(theme.bordered(theme.surface, 16f, 1f, theme.outline));
+        card.setElevation(dp(2));
+        card.setFocusable(true);
+        card.setFocusableInTouchMode(true);
+        card.setOnFocusChangeListener((v, focused) -> {
+            v.setBackground(focused ? theme.selection(16f, theme.surface, 2f)
+                    : theme.bordered(theme.surface, 16f, 1f, theme.outline));
+            v.setElevation(dp(focused ? 7 : 2));
+        });
+        TextView name = label("Share", 16);
+        name.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        name.setPadding(0, 0, 0, 0);
+        card.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView value = label(SHARE_MODES[shareMode], 14);
+        value.setTextColor(theme.textPrimary);
+        value.setPadding(dp(16), dp(7), dp(16), dp(7));
+        value.setBackground(theme.pill(theme.surfaceAlt));
+        card.addView(value);
+        settingsShareRow = settingsActions.size();
+        settingsActions.add(card);
+        card.setOnClickListener(v -> cycleShareMode(1));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.topMargin = dp(22);
+        page.addView(card, cardParams);
+
+        TextView footer = label(SHARE_MODE_FOOTERS[shareMode], 13);
+        footer.setGravity(Gravity.LEFT);
+        footer.setTextColor(theme.textMuted);
+        footer.setPadding(0, dp(10), 0, 0);
+        page.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    /** Cycles the share-method preference; the Share screen reads it when it opens. */
+    void cycleShareMode(int delta) {
+        shareMode = Math.floorMod(shareMode + delta, SHARE_MODES.length);
+        preferences.edit().putInt(PREF_SHARE_MODE, shareMode).apply();
+        buildSettings();
     }
 
     private void buildAppearancePage(LinearLayout page) {
@@ -870,6 +932,12 @@ public final class MainActivity extends Activity {
         if (settingsActions.isEmpty()) return;
         settingsFocus = Math.max(0, Math.min(settingsFocus, settingsActions.size() - 1));
         settingsActions.get(settingsFocus).requestFocus();
+        // Only the share row can be changed with A, so the prompt follows the focus.
+        boolean shareFocused = settingsFocus == settingsShareRow;
+        if (shareFocused != settingsShareHintShown) {
+            settingsShareHintShown = shareFocused;
+            settingsController.refreshHints();
+        }
     }
 
     private void pickSource() {
@@ -2041,7 +2109,8 @@ public final class MainActivity extends Activity {
             if (address == null) throw new java.io.IOException("No LAN address");
             shareUrl = "http://" + address + ":" + server.getLocalPort();
             showShareUi(photo, shareUrl, sharePhotos);
-            shareThread = new Thread(() -> serveShare(server, token, sharePhotos), "gallery-share");
+            final int mode = shareMode;
+            shareThread = new Thread(() -> serveShare(server, token, sharePhotos, mode), "gallery-share");
             shareThread.start();
         } catch (Exception e) {
             showPlaceholder("Unable to start local sharing");
@@ -2049,52 +2118,110 @@ public final class MainActivity extends Activity {
         }
     }
     private void shareListenerStopped() { if (current == Screen.SHARE) closeShareScreen(); shareServer = null; }
-    private void serveShare(ServerSocket server, String token, ArrayList<Photo> sharePhotos) {
+    /** One request per connection. Gallery mode answers three routes; file mode only the root. */
+    private void serveShare(ServerSocket server, String token, ArrayList<Photo> sharePhotos, int mode) {
         while (!server.isClosed()) {
             try (Socket client = server.accept()) {
                 client.setSoTimeout(10000);
-                BufferedInputStream in = new BufferedInputStream(client.getInputStream());
-                ByteArrayOutputStream request = new ByteArrayOutputStream();
-                int b, matched = 0;
-                while ((b = in.read()) != -1) {
-                    request.write(b);
-                    if (b == '\n') { if (++matched >= 2) break; } else if (b != '\r') matched = 0;
-                    if (request.size() > 4096) break;
-                }
-                String first = request.toString("US-ASCII").split("\\r?\\n", 2)[0];
-                String expected = "GET / ";
+                String path = readRequestPath(client.getInputStream());
                 OutputStream out = client.getOutputStream();
-                if (!first.startsWith(expected)) {
-                    out.write("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
-                } else {
-                    if (sharePhotos.size() == 1) {
-                        Photo photo = sharePhotos.get(0);
-                        String mime = getContentResolver().getType(photo.uri);
-                        if (mime == null || !mime.startsWith("image/")) mime = "application/octet-stream";
-                        out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Disposition: attachment; filename=\"" + safeFilename(photo.name) + "\"\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
-                        try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
-                            if (image != null) { byte[] buffer = new byte[32768]; int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) out.write(buffer, 0, count); }
-                        }
-                    } else {
-                        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Disposition: attachment; filename=\"gallery-images.zip\"\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
-                        java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(out);
-                        byte[] buffer = new byte[32768];
-                        for (Photo photo : sharePhotos) {
-                            if (server.isClosed()) break;
-                            zip.putNextEntry(new java.util.zip.ZipEntry(safeFilename(photo.name)));
-                            try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
-                                if (image != null) { int count; while ((count = image.read(buffer)) != -1 && !server.isClosed()) zip.write(buffer, 0, count); }
-                            } catch (Exception ignored) { }
-                            zip.closeEntry();
-                        }
-                        zip.finish();
-                    }
-                    out.flush();
-                }
-            } catch (java.net.SocketException e) { break; }
-            catch (Exception ignored) { }
+                if (path == null) writeEmptyResponse(out, "400 Bad Request");
+                else if (mode == SHARE_MODE_GALLERY) serveGalleryRequest(out, path, sharePhotos);
+                else serveFileRequest(out, path, sharePhotos);
+                out.flush();
+            } catch (Exception ignored) {
+                // A browser that navigates away aborts its request; only a closed server ends the loop.
+                if (server.isClosed()) break;
+            }
         }
         runOnUiThread(this::shareListenerStopped);
+    }
+    /** Request-target of the GET request line, without its query string; null for anything else. */
+    private static String readRequestPath(InputStream rawInput) throws java.io.IOException {
+        BufferedInputStream in = new BufferedInputStream(rawInput);
+        ByteArrayOutputStream request = new ByteArrayOutputStream();
+        int b, matched = 0;
+        while ((b = in.read()) != -1) {
+            request.write(b);
+            if (b == '\n') { if (++matched >= 2) break; } else if (b != '\r') matched = 0;
+            if (request.size() > 4096) return null;
+        }
+        String[] parts = request.toString("US-ASCII").split("\\r?\\n", 2)[0].trim().split(" ");
+        if (parts.length < 2 || !parts[0].equals("GET")) return null;
+        String target = parts[1];
+        int query = target.indexOf('?');
+        return query >= 0 ? target.substring(0, query) : target;
+    }
+    /** File sharing: the single image, or every shared image packed into one ZIP. */
+    private void serveFileRequest(OutputStream out, String path, ArrayList<Photo> sharePhotos) throws java.io.IOException {
+        if (!path.equals("/")) { writeEmptyResponse(out, "404 Not Found"); return; }
+        if (sharePhotos.size() == 1) {
+            writeImageResponse(out, sharePhotos.get(0), false);
+            return;
+        }
+        out.write("HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Disposition: attachment; filename=\"gallery-images.zip\"\r\nConnection: close\r\n\r\n".getBytes("US-ASCII"));
+        java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(out);
+        byte[] buffer = new byte[32768];
+        for (Photo photo : sharePhotos) {
+            zip.putNextEntry(new java.util.zip.ZipEntry(safeFilename(photo.name)));
+            try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+                if (image != null) { int count; while ((count = image.read(buffer)) != -1) zip.write(buffer, 0, count); }
+            } catch (Exception ignored) { }
+            zip.closeEntry();
+        }
+        zip.finish();
+    }
+    /** Gallery sharing: the page itself, its thumbnails, and the full-size image behind each tile. */
+    private void serveGalleryRequest(OutputStream out, String path, ArrayList<Photo> sharePhotos) throws java.io.IOException {
+        if (path.equals("/") || path.equals("/index.html")) {
+            byte[] page = galleryHtml(sharePhotos).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " + page.length
+                    + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
+            out.write(page);
+            return;
+        }
+        int index = galleryIndex(path, "/t/");
+        if (index >= 0 && index < sharePhotos.size()) { writeThumbnailResponse(out, sharePhotos.get(index)); return; }
+        index = galleryIndex(path, "/i/");
+        if (index >= 0 && index < sharePhotos.size()) { writeImageResponse(out, sharePhotos.get(index), true); return; }
+        writeEmptyResponse(out, "404 Not Found");
+    }
+    /** Index of a "/prefix/<number>" path, or -1 when the path does not have that shape. */
+    private static int galleryIndex(String path, String prefix) {
+        if (!path.startsWith(prefix)) return -1;
+        String tail = path.substring(prefix.length());
+        if (tail.isEmpty() || tail.length() > 6) return -1;
+        for (int i = 0; i < tail.length(); i++) if (tail.charAt(i) < '0' || tail.charAt(i) > '9') return -1;
+        return Integer.parseInt(tail);
+    }
+    private String galleryHtml(java.util.List<Photo> sharePhotos) {
+        ArrayList<SharePage.Item> items = new ArrayList<>(sharePhotos.size());
+        for (Photo photo : sharePhotos) items.add(new SharePage.Item(photo.name, imageFormat(photo), imageDate(photo)));
+        return SharePage.html(items);
+    }
+    private void writeImageResponse(OutputStream out, Photo photo, boolean inline) throws java.io.IOException {
+        String mime = getContentResolver().getType(photo.uri);
+        if (mime == null || !mime.startsWith("image/")) mime = "application/octet-stream";
+        out.write(("HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Disposition: " + (inline ? "inline" : "attachment")
+                + "; filename=\"" + safeFilename(photo.name) + "\"\r\nCache-Control: max-age=600\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
+        try (InputStream image = getContentResolver().openInputStream(photo.uri)) {
+            if (image != null) { byte[] buffer = new byte[32768]; int count; while ((count = image.read(buffer)) != -1) out.write(buffer, 0, count); }
+        }
+    }
+    /** Serves the grid thumbnail from the same disk cache the gallery uses, decoding it if needed. */
+    private void writeThumbnailResponse(OutputStream out, Photo photo) throws java.io.IOException {
+        File file = thumbnailFile(photo);
+        if (!file.isFile()) loadThumbnail(photo);
+        if (!file.isFile()) { writeImageResponse(out, photo, true); return; }
+        out.write(("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: " + file.length()
+                + "\r\nCache-Control: max-age=600\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
+        try (InputStream input = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[32768]; int count;
+            while ((count = input.read(buffer)) != -1) out.write(buffer, 0, count);
+        }
+    }
+    private static void writeEmptyResponse(OutputStream out, String status) throws java.io.IOException {
+        out.write(("HTTP/1.1 " + status + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").getBytes("US-ASCII"));
     }
     private ServerSocket openShareServer() throws java.io.IOException {
         java.net.InetAddress bindAddress = java.net.InetAddress.getByName("0.0.0.0");
@@ -2141,6 +2268,13 @@ public final class MainActivity extends Activity {
         return result;
     }
     private void showShareUi(Photo photo, String url) { showShareUi(photo, url, Collections.singletonList(photo)); }
+    /** What the receiving device gets, phrased for the active share method. */
+    private String shareSubtitle(int count) {
+        if (shareMode == SHARE_MODE_GALLERY) {
+            return count > 1 ? "Scan to browse and copy " + count + " images" : "Scan to open this image in a web gallery";
+        }
+        return count > 1 ? "Scan to download " + count + " images as a ZIP" : "Scan to open this image";
+    }
     private void showShareUi(Photo photo, String url, java.util.List<Photo> sharePhotos) {
         int count = sharePhotos.size();
         enterScreen(Screen.SHARE);
@@ -2183,7 +2317,7 @@ public final class MainActivity extends Activity {
         filename.setSingleLine(true);
         filename.setEllipsize(android.text.TextUtils.TruncateAt.END);
         card.addView(filename, new LinearLayout.LayoutParams(-1, -2));
-        TextView subtitle = label(count > 1 ? "Scan to download " + count + " images as a ZIP" : "Scan to open this image", 13);
+        TextView subtitle = label(shareSubtitle(count), 13);
         subtitle.setTextColor(theme.textSecondary);
         subtitle.setPadding(0, 0, 0, 0);
         card.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));

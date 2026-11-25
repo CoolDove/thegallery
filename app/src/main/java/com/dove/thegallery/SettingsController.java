@@ -21,6 +21,9 @@ final class SettingsController implements ScreenController {
         if (activity.settingsPage == MainActivity.SETTINGS_PAGE_APPEARANCE) {
             panel.a("Change", 0, () -> activity.cycleThemeMode(1));
             panel.a.visible = true;
+        } else if (activity.settingsFocus == activity.settingsShareRow) {
+            panel.a("Change", 0, () -> activity.cycleShareMode(1));
+            panel.a.visible = true;
         }
         interaction.show(panel);
     }
@@ -45,6 +48,8 @@ final class SettingsController implements ScreenController {
             // The appearance page has one value row, so the D-pad adjusts it instead of hunting focus.
             if (activity.settingsPage == MainActivity.SETTINGS_PAGE_APPEARANCE) {
                 activity.cycleThemeMode(step ? 1 : -1);
+            } else if (activity.settingsFocus == activity.settingsShareRow) {
+                activity.cycleShareMode(step ? 1 : -1);
             } else if (!activity.settingsActions.isEmpty()) {
                 activity.settingsFocus = Math.floorMod(activity.settingsFocus + (step ? 1 : -1), activity.settingsActions.size());
                 activity.focusSettingsAction();
