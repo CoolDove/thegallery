@@ -16,14 +16,19 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.LayerDrawable;
 
 /**
- * Resolves the palette for the active system theme and builds the shared surface shapes.
- * Light and dark values live in res/values/colors.xml and res/values-night/colors.xml, so a
- * system theme switch only requires rebuilding the visible screen.
+ * Resolves the palette for the selected theme mode and builds the shared surface shapes.
+ * Light and dark values live in res/values/colors.xml and res/values-night/colors.xml; a forced
+ * mode reads the same night resources through a configuration-adjusted context, so changing the
+ * mode only requires rebuilding the visible screen.
  */
 final class Theme {
     static final float TILE_RADIUS_DP = 18f;
     static final float CARD_RADIUS_DP = 22f;
     static final float PHOTO_RADIUS_DP = 11f;
+
+    /** Theme modes in preference order: the first one is the default. */
+    static final int FOLLOW_SYSTEM = 0, LIGHT = 1, DARK = 2;
+    static final String[] MODE_LABELS = {"Follow system", "Light", "Dark"};
 
     final boolean night;
     final int background;
@@ -47,8 +52,8 @@ final class Theme {
     final int viewerBackground;
     private final float density;
 
-    private Theme(Context context) {
-        night = isNight(context);
+    private Theme(Context context, boolean night) {
+        this.night = night;
         background = context.getColor(R.color.gallery_background);
         backdropTile = context.getColor(R.color.gallery_backdrop_tile);
         backdropStart = context.getColor(R.color.gallery_backdrop_start);
@@ -76,7 +81,24 @@ final class Theme {
                 == Configuration.UI_MODE_NIGHT_YES;
     }
 
-    static Theme of(Context context) { return new Theme(context); }
+    /** Theme.of follows the system palette; a forced mode resolves night resources explicitly. */
+    static Theme of(Context context, int mode) {
+        boolean night = mode == DARK || (mode != LIGHT && isNight(context));
+        Context palette = night == isNight(context) ? context : forcedNight(context, night);
+        return new Theme(palette, night);
+    }
+
+    static int clampMode(int mode) {
+        return Math.max(FOLLOW_SYSTEM, Math.min(mode, MODE_LABELS.length - 1));
+    }
+
+    /** Same resources, same density, nightly qualifiers selected by hand instead of by the system. */
+    private static Context forcedNight(Context context, boolean night) {
+        Configuration config = new Configuration(context.getResources().getConfiguration());
+        config.uiMode = (config.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
+                | (night ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
+        return context.createConfigurationContext(config);
+    }
 
     int dp(float value) { return Math.round(value * density); }
 

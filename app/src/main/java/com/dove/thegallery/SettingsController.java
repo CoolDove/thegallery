@@ -2,7 +2,7 @@ package com.dove.thegallery;
 
 import android.view.KeyEvent;
 
-/** Settings screen input: linear focus navigation and activation. */
+/** Settings screen input: linear focus navigation, activation, and LB/RB sub-page switching. */
 final class SettingsController implements ScreenController {
     private final MainActivity activity;
     private final InteractionSystem interaction;
@@ -16,7 +16,13 @@ final class SettingsController implements ScreenController {
 
     @Override public void refreshHints() {
         if (activity.current != Screen.SETTINGS) return;
-        interaction.show(HintPanel.backOnly(activity::closeSettings));
+        HintPanel panel = HintPanel.backOnly(activity::closeSettings);
+        // The appearance page's single row is a value: A cycles it.
+        if (activity.settingsPage == MainActivity.SETTINGS_PAGE_APPEARANCE) {
+            panel.a("Change", 0, () -> activity.cycleThemeMode(1));
+            panel.a.visible = true;
+        }
+        interaction.show(panel);
     }
 
     @Override public boolean onKey(KeyEvent event) {
@@ -28,15 +34,25 @@ final class SettingsController implements ScreenController {
             return true;
         }
         if (action != KeyEvent.ACTION_DOWN) return true;
+        boolean firstPress = event.getRepeatCount() == 0;
 
-        if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-            if (!activity.settingsActions.isEmpty()) {
-                activity.settingsFocus = (activity.settingsFocus + 1) % activity.settingsActions.size();
+        if (key == KeyEvent.KEYCODE_BUTTON_L1) {
+            if (firstPress) activity.switchSettingsPage(-1);
+        } else if (key == KeyEvent.KEYCODE_BUTTON_R1) {
+            if (firstPress) activity.switchSettingsPage(1);
+        } else if (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            boolean step = key == KeyEvent.KEYCODE_DPAD_RIGHT;
+            // The appearance page has one value row, so the D-pad adjusts it instead of hunting focus.
+            if (activity.settingsPage == MainActivity.SETTINGS_PAGE_APPEARANCE) {
+                activity.cycleThemeMode(step ? 1 : -1);
+            } else if (!activity.settingsActions.isEmpty()) {
+                activity.settingsFocus = Math.floorMod(activity.settingsFocus + (step ? 1 : -1), activity.settingsActions.size());
                 activity.focusSettingsAction();
             }
-        } else if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_LEFT) {
+        } else if (key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_DPAD_UP) {
             if (!activity.settingsActions.isEmpty()) {
-                activity.settingsFocus = Math.floorMod(activity.settingsFocus - 1, activity.settingsActions.size());
+                int step = key == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : -1;
+                activity.settingsFocus = Math.floorMod(activity.settingsFocus + step, activity.settingsActions.size());
                 activity.focusSettingsAction();
             }
         } else if (key == KeyEvent.KEYCODE_BUTTON_A || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {

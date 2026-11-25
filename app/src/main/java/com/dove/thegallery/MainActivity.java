@@ -5,9 +5,12 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.LinearGradient;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Shader;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Typeface;
@@ -70,6 +73,9 @@ public final class MainActivity extends Activity {
     private static final String PREFS = "gallery";
     static final String[] SORTS = {"Newest", "Oldest", "Name A-Z", "Name Z-A"};
     static final String[] DISPLAY_MODES = {"Simple", "Normal", "Detailed"};
+    private static final String PREF_THEME_MODE = "theme_mode";
+    /** Settings sub-pages, switched with LB/RB. */
+    static final int SETTINGS_PAGE_SOURCES = 0, SETTINGS_PAGE_APPEARANCE = 1;
     private static final long OVERLAY_FADE_MS = 140;
     /** Height of the floating gallery top bar; the grid pads its top by this much. */
     private static final int TOP_BAR_DP = 52;
@@ -123,6 +129,8 @@ public final class MainActivity extends Activity {
     private Runnable directoryCountPoll;
     final ArrayList<View> settingsActions = new ArrayList<>();
     int settingsFocus;
+    int settingsPage = SETTINGS_PAGE_SOURCES;
+    int themeMode = Theme.FOLLOW_SYSTEM;
     private int gridColumns = 1;
     private ImageView fullImage;
     private Runnable shareBackdropCycle;
@@ -157,8 +165,10 @@ public final class MainActivity extends Activity {
         preferences = getPreferences(0);
         sort = Math.max(0, Math.min(preferences.getInt("sort", 0), SORTS.length - 1));
         displayMode = Math.max(0, Math.min(preferences.getInt("display_mode", 1), DISPLAY_MODES.length - 1));
+        themeMode = Theme.clampMode(preferences.getInt(PREF_THEME_MODE, Theme.FOLLOW_SYSTEM));
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-        theme = Theme.of(this);
+        theme = Theme.of(this, themeMode);
+        applyWindowBackground();
         root = new FrameLayout(this);
         root.setBackground(theme.backdrop());
         setContentView(root);
@@ -565,7 +575,14 @@ public final class MainActivity extends Activity {
         getPreferences(0).edit().putStringSet("sources", saved).putString("folder", sources.isEmpty() ? "" : sources.get(0).toString()).apply();
     }
 
+    /** Entering Settings from another screen starts on the first page with focus reset. */
     void showSettings() {
+        if (current != Screen.SETTINGS) { settingsPage = SETTINGS_PAGE_SOURCES; settingsFocus = 0; }
+        buildSettings();
+    }
+
+    /** Rebuilds the current settings page, keeping the active page and the focused action. */
+    private void buildSettings() {
         enterScreen(Screen.SETTINGS);
         if (directoryCountPoll != null) { handler.removeCallbacks(directoryCountPoll); directoryCountPoll = null; }
         settingsActions.clear();
@@ -573,29 +590,112 @@ public final class MainActivity extends Activity {
         root.setBackground(theme.backdrop());
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(dp(48), dp(20), dp(48), dp(96));
+        page.setPadding(dp(48), dp(12), dp(48), dp(96));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = heading("Settings", 30);
+        TextView title = heading("Settings", 21);
         title.setPadding(0, 0, 0, 0);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         header.addView(brand());
         page.addView(header, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView subtitle = label("Choose the folders The Gallery reads images from.", 14);
+        LinearLayout.LayoutParams stripParams = new LinearLayout.LayoutParams(-1, -2);
+        stripParams.topMargin = dp(8);
+        page.addView(pageStrip(), stripParams);
+
+        if (settingsPage == SETTINGS_PAGE_APPEARANCE) buildAppearancePage(page);
+        else buildSourcesPage(page);
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
+        scroll.addView(page, new android.widget.FrameLayout.LayoutParams(-1, -2));
+        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        focusSettingsAction();
+        settingsController.onEnter();
+    }
+
+    /**
+     * Page indicator: only the current page name sits in the middle. Each edge carries a direction
+     * arrow with the shoulder glyph beneath it, so the page control reads as one strip.
+     */
+    private View pageStrip() {
+        FrameLayout strip = new FrameLayout(this);
+        strip.setBackground(theme.pill(theme.surfaceAlt));
+        String pageName = settingsPage == SETTINGS_PAGE_APPEARANCE ? "Appearance" : "Sources";
+        TextView name = label(pageName, 15);
+        name.setTextColor(theme.textPrimary);
+        name.setLetterSpacing(0.02f);
+        name.setPadding(0, 0, 0, 0);
+        strip.addView(name, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        strip.addView(pageTurnButton(-1),
+                new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.LEFT));
+        strip.addView(pageTurnButton(1),
+                new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL | Gravity.RIGHT));
+        return strip;
+    }
+
+    /** Direction arrow above its shoulder glyph; tapping anywhere on it turns the page. */
+    private View pageTurnButton(int delta) {
+        boolean forward = delta > 0;
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.CENTER_HORIZONTAL);
+        column.setPadding(dp(16), dp(6), dp(16), dp(6));
+
+        column.addView(new ArrowView(this, forward, theme.accent),
+                new LinearLayout.LayoutParams(dp(14), dp(12)));
+
+        ImageView shoulder = icon(forward ? "switch_r" : "switch_l");
+        LinearLayout.LayoutParams shoulderParams = new LinearLayout.LayoutParams(dp(28), dp(15));
+        shoulderParams.topMargin = dp(3);
+        column.addView(shoulder, shoulderParams);
+
+        column.setOnClickListener(v -> switchSettingsPage(delta));
+        return column;
+    }
+
+    /** Solid direction triangle drawn straight onto the canvas; no drawable bounds to go wrong. */
+    private static final class ArrowView extends View {
+        private final boolean forward;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        ArrowView(android.content.Context context, boolean forward, int color) {
+            super(context);
+            this.forward = forward;
+            paint.setColor(color);
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float width = getWidth(), height = getHeight();
+            path.reset();
+            if (forward) {
+                path.moveTo(0f, 0f);
+                path.lineTo(width, height * 0.5f);
+                path.lineTo(0f, height);
+            } else {
+                path.moveTo(width, 0f);
+                path.lineTo(0f, height * 0.5f);
+                path.lineTo(width, height);
+            }
+            path.close();
+            canvas.drawPath(path, paint);
+        }
+    }
+
+    private TextView pageSubtitle(String text) {
+        TextView subtitle = label(text, 14);
         subtitle.setGravity(Gravity.LEFT);
         subtitle.setTextColor(theme.textSecondary);
-        subtitle.setPadding(0, dp(2), 0, 0);
-        page.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
+        subtitle.setPadding(0, dp(8), 0, 0);
+        return subtitle;
+    }
 
-        TextView category = label("SOURCES", 11);
-        category.setGravity(Gravity.LEFT);
-        category.setTextColor(theme.textMuted);
-        category.setLetterSpacing(0.16f);
-        category.setPadding(0, dp(16), 0, dp(4));
-        page.addView(category, new LinearLayout.LayoutParams(-1, -2));
+    private void buildSourcesPage(LinearLayout page) {
+        page.addView(pageSubtitle("Choose the folders The Gallery reads images from."), new LinearLayout.LayoutParams(-1, -2));
 
         for (int i = 0; i < sources.size(); i++) {
             final Uri source = sources.get(i);
@@ -676,15 +776,66 @@ public final class MainActivity extends Activity {
         footer.setTextColor(theme.textMuted);
         footer.setPadding(0, dp(14), 0, 0);
         page.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+    }
 
-        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setClipToPadding(false);
-        scroll.addView(page, new android.widget.FrameLayout.LayoutParams(-1, -2));
-        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+    private void buildAppearancePage(LinearLayout page) {
+        page.addView(pageSubtitle("Choose how The Gallery looks."), new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(18), dp(13), dp(14), dp(13));
+        card.setBackground(theme.bordered(theme.surface, 16f, 1f, theme.outline));
+        card.setElevation(dp(2));
+        card.setFocusable(true);
+        card.setFocusableInTouchMode(true);
+        card.setOnFocusChangeListener((v, focused) -> {
+            v.setBackground(focused ? theme.selection(16f, theme.surface, 2f)
+                    : theme.bordered(theme.surface, 16f, 1f, theme.outline));
+            v.setElevation(dp(focused ? 7 : 2));
+        });
+        TextView name = label("Theme", 16);
+        name.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
+        name.setPadding(0, 0, 0, 0);
+        card.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView value = label(Theme.MODE_LABELS[themeMode], 14);
+        value.setTextColor(theme.textPrimary);
+        value.setPadding(dp(16), dp(7), dp(16), dp(7));
+        value.setBackground(theme.pill(theme.surfaceAlt));
+        card.addView(value);
+        settingsActions.add(card);
+        card.setOnClickListener(v -> cycleThemeMode(1));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.topMargin = dp(8);
+        page.addView(card, cardParams);
+
+        TextView footer = label("Follow system uses the device light or dark setting. Left/Right or A changes the value.", 13);
+        footer.setGravity(Gravity.LEFT);
+        footer.setTextColor(theme.textMuted);
+        footer.setPadding(0, dp(14), 0, 0);
+        page.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    /** LB/RB move between the settings sub-pages and wrap around. */
+    void switchSettingsPage(int delta) {
+        int pages = 2;
+        settingsPage = Math.floorMod(settingsPage + delta, pages);
         settingsFocus = 0;
-        focusSettingsAction();
-        settingsController.onEnter();
+        buildSettings();
+    }
+
+    /** Cycles the theme preference and rebuilds the visible screen with the new palette. */
+    void cycleThemeMode(int delta) {
+        int mode = Math.floorMod(themeMode + delta, Theme.MODE_LABELS.length);
+        themeMode = mode;
+        preferences.edit().putInt(PREF_THEME_MODE, mode).apply();
+        theme = Theme.of(this, mode);
+        applyWindowBackground();
+        rebuildForTheme();
+    }
+
+    private void applyWindowBackground() {
+        getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(theme.background));
     }
 
     void focusSettingsAction() {
@@ -1804,9 +1955,15 @@ public final class MainActivity extends Activity {
     /** System light/dark switch: rebuild the visible screen with the other palette, preserving state. */
     @Override public void onConfigurationChanged(Configuration config) {
         super.onConfigurationChanged(config);
-        Theme updated = Theme.of(this);
+        Theme updated = Theme.of(this, themeMode);
         if (updated.night == theme.night) { theme = updated; return; }
         theme = updated;
+        applyWindowBackground();
+        rebuildForTheme();
+    }
+
+    /** Rebuilds whatever screen is visible so it picks up the current palette. */
+    private void rebuildForTheme() {
         if (deleteOverlay != null) {
             View overlay = deleteOverlay;
             deleteOverlay = null;
@@ -1814,7 +1971,7 @@ public final class MainActivity extends Activity {
         }
         switch (current) {
             case SETTINGS:
-                showSettings();
+                buildSettings();
                 break;
             case VIEWER:
                 rerenderViewer();
