@@ -5,9 +5,11 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
 import android.graphics.LinearGradient;
+import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Shader;
 import android.graphics.drawable.GradientDrawable;
@@ -643,33 +645,45 @@ public final class MainActivity extends Activity {
         column.setGravity(Gravity.CENTER_HORIZONTAL);
         column.setPadding(dp(16), dp(6), dp(16), dp(6));
 
-        ImageView arrow = new ImageView(this);
-        arrow.setImageDrawable(triangle(forward));
-        column.addView(arrow, new LinearLayout.LayoutParams(dp(12), dp(10)));
+        column.addView(new ArrowView(this, forward, theme.accent),
+                new LinearLayout.LayoutParams(dp(14), dp(12)));
 
         ImageView shoulder = icon(forward ? "switch_r" : "switch_l");
         LinearLayout.LayoutParams shoulderParams = new LinearLayout.LayoutParams(dp(28), dp(15));
-        shoulderParams.topMargin = dp(2);
+        shoulderParams.topMargin = dp(3);
         column.addView(shoulder, shoulderParams);
 
         column.setOnClickListener(v -> switchSettingsPage(delta));
         return column;
     }
 
-    /** Solid triangle pointing the way the shoulder button turns; it matches neither font nor density. */
-    private android.graphics.drawable.Drawable triangle(boolean forward) {
-        Path path = new Path();
-        if (forward) {
-            path.moveTo(0f, 0f); path.lineTo(1f, 0.5f); path.lineTo(0f, 1f);
-        } else {
-            path.moveTo(1f, 0f); path.lineTo(0f, 0.5f); path.lineTo(1f, 1f);
+    /** Solid direction triangle drawn straight onto the canvas; no drawable bounds to go wrong. */
+    private static final class ArrowView extends View {
+        private final boolean forward;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        ArrowView(android.content.Context context, boolean forward, int color) {
+            super(context);
+            this.forward = forward;
+            paint.setColor(color);
         }
-        path.close();
-        android.graphics.drawable.ShapeDrawable shape =
-                new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.PathShape(path, 1f, 1f));
-        shape.getPaint().setColor(theme.textSecondary);
-        shape.getPaint().setAntiAlias(true);
-        return shape;
+
+        @Override protected void onDraw(Canvas canvas) {
+            float width = getWidth(), height = getHeight();
+            path.reset();
+            if (forward) {
+                path.moveTo(0f, 0f);
+                path.lineTo(width, height * 0.5f);
+                path.lineTo(0f, height);
+            } else {
+                path.moveTo(width, 0f);
+                path.lineTo(0f, height * 0.5f);
+                path.lineTo(width, height);
+            }
+            path.close();
+            canvas.drawPath(path, paint);
+        }
     }
 
     private TextView pageSubtitle(String text) {
