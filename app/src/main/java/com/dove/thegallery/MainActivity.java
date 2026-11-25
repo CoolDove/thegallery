@@ -2195,9 +2195,9 @@ public final class MainActivity extends Activity {
         return Integer.parseInt(tail);
     }
     private String galleryHtml(java.util.List<Photo> sharePhotos) {
-        ArrayList<SharePage.Item> items = new ArrayList<>(sharePhotos.size());
-        for (Photo photo : sharePhotos) items.add(new SharePage.Item(photo.name, imageFormat(photo), imageDate(photo)));
-        return SharePage.html(items);
+        ArrayList<String> names = new ArrayList<>(sharePhotos.size());
+        for (Photo photo : sharePhotos) names.add(photo.name);
+        return SharePage.html(names);
     }
     private void writeImageResponse(OutputStream out, Photo photo, boolean inline) throws java.io.IOException {
         String mime = getContentResolver().getType(photo.uri);
@@ -2271,7 +2271,7 @@ public final class MainActivity extends Activity {
     /** What the receiving device gets, phrased for the active share method. */
     private String shareSubtitle(int count) {
         if (shareMode == SHARE_MODE_GALLERY) {
-            return count > 1 ? "Scan to browse and copy " + count + " images" : "Scan to open this image in a web gallery";
+            return count > 1 ? "Scan to browse " + count + " images" : "Scan to open this image in a web gallery";
         }
         return count > 1 ? "Scan to download " + count + " images as a ZIP" : "Scan to open this image";
     }

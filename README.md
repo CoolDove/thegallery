@@ -45,7 +45,7 @@ We can share selected images over the **local network**, so you can use another 
 Settings has two sharing methods:
 
 - **File** sends what you shared: the image itself, or one ZIP when you share several.
-- **Gallery** opens a small web page listing the shared images. View an image full size and copy it on the receiving device, one by one, instead of taking the whole ZIP.
+- **Gallery** opens a plain web page of the shared images, just a grid. Click one to open it full size, then use the browser's image menu to copy it, instead of taking the whole ZIP.
 
 <p align="center">
   <img src="screenshots/share_screen.jpg" width="50%" alt="share">
