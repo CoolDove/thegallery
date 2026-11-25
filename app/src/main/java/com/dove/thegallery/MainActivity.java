@@ -1349,10 +1349,7 @@ public final class MainActivity extends Activity {
             if (photos.isEmpty()) { pickFolder(); return; }
             openSelectedPhoto();
         } else if (key == KeyEvent.KEYCODE_BUTTON_X) {
-            sort = (sort + 1) % SORTS.length;
-            preferences.edit().putInt("sort", sort).apply();
-            sortPhotos();
-            selected = Math.min(selected, Math.max(0, photos.size() - 1));
+            cycleSortKeepingSelection();
             showGrid();
         }
     }
@@ -1423,14 +1420,26 @@ public final class MainActivity extends Activity {
 
     boolean hasFolder() { return folder != null; }
 
-    void applySortFromWheel() {
-        String selectedName = photos.isEmpty() ? null : photos.get(Math.min(selected, photos.size() - 1)).name;
+    /**
+     * Advance the sort cycle while keeping the highlighted photo under the cursor.
+     * Shared by the X short press and the X-hold sorting wheel so both behave the same.
+     */
+    private void cycleSortKeepingSelection() {
+        String selectedUri = photos.isEmpty() ? null
+                : photos.get(Math.max(0, Math.min(selected, photos.size() - 1))).uri.toString();
         sort = (sort + 1) % SORTS.length;
         preferences.edit().putInt("sort", sort).apply();
         sortPhotos();
-        if (selectedName != null) {
-            for (int i = 0; i < photos.size(); i++) if (selectedName.equals(photos.get(i).name)) { selected = i; break; }
+        if (selectedUri != null) {
+            for (int i = 0; i < photos.size(); i++) {
+                if (selectedUri.equals(photos.get(i).uri.toString())) { selected = i; break; }
+            }
         }
+        selected = Math.max(0, Math.min(selected, photos.size() - 1));
+    }
+
+    void applySortFromWheel() {
+        cycleSortKeepingSelection();
         if (grid != null) {
             ((BaseAdapter) grid.getAdapter()).notifyDataSetChanged();
             grid.setSelection(selected);
